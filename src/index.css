@@ -16,3 +16,27 @@ input { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid 
 .page { max-width: 880px; margin: 0 auto; padding: 16px; }
 .bar { display: flex; gap: 12px; align-items: center; } .bar strong { margin-right: auto; }
 .join { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+
+/* teacher dashboard + lesson builder (plain on purpose: restyle when the design kit lands) */
+a { color: var(--accent); }
+a.button { display: inline-block; text-decoration: none; padding: 8px 14px; border-radius: 8px; border: 1px solid #cfd8d5; background: var(--surface); color: var(--ink); }
+a.button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+section { margin-top: 28px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cards { list-style: none; padding: 0; display: grid; gap: 10px; }
+.card { background: var(--surface); border: 1px solid #dde4e2; border-radius: 10px; padding: 12px 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.stack { display: grid; gap: 10px; }
+.stack > label { display: grid; gap: 4px; font-weight: 600; }
+label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+input.text, select, textarea { letter-spacing: normal; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid #cfd8d5; background: var(--surface); }
+textarea { width: 100%; resize: vertical; }
+input.time { width: 6.5em; }
+.grow { flex: 1; min-width: 12em; }
+button.small { padding: 4px 10px; font-size: .875rem; }
+button.danger { color: var(--danger); }
+.video { aspect-ratio: 16 / 9; width: 100%; background: #000; border-radius: 10px; overflow: hidden; }
+.video iframe, .video > div { width: 100%; height: 100%; }
+.builder .bar { position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 1; }
+code { background: #eef3f1; padding: 2px 6px; border-radius: 6px; letter-spacing: .1em; }
+.stack > button { justify-self: start; }
