@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
-import { CLASSROOM_SCOPES } from '../lib/classroom'
+import { CLASSROOM_SCOPES } from '../../supabase/functions/_shared/scopes.ts'
 
 type AuthState = {
   loading: boolean
@@ -9,7 +9,7 @@ type AuthState = {
   profile: Profile | null
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
-  /** Teacher-only: re-run Google sign-in asking for read access to Classroom courses + rosters. */
+  /** Teacher-only: re-run Google sign-in asking for Classroom access (stored server-side for syncing). */
   connectClassroom: () => Promise<void>
 }
 
@@ -75,8 +75,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/teacher?classroom=1`,
-        scopes: CLASSROOM_SCOPES,
-        queryParams: { prompt: 'consent', ...(profile?.email ? { login_hint: profile.email } : {}) },
+        scopes: CLASSROOM_SCOPES.join(' '),
+        // offline + consent: Google only returns a refresh token on a fresh consent.
+        queryParams: { access_type: 'offline', prompt: 'consent', ...(profile?.email ? { login_hint: profile.email } : {}) },
       },
     })
     if (error) throw error

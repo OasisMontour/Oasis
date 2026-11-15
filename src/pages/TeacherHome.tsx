@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
-import { ClassroomAuthError, fetchClassroomRosters } from '../lib/classroom'
+import { useClassroomSync } from '../lib/useClassroomSync'
 
 type ClassRow = { id: string; name: string; join_code: string; google_course_id: string | null; enrollments: { count: number }[] }
 type LessonRow = {
@@ -15,8 +15,7 @@ type LessonRow = {
 }
 
 export function TeacherHome() {
-  const { profile, session, signOut, connectClassroom } = useAuth()
-  const [params, setParams] = useSearchParams()
+  const { profile, signOut } = useAuth()
   const [classes, setClasses] = useState<ClassRow[]>([])
   const [lessons, setLessons] = useState<LessonRow[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -44,36 +43,7 @@ export function TeacherHome() {
     load()
   }, [load])
 
-  // ---- Google Classroom roster import
-  const [sync, setSync] = useState<{ busy: boolean; text: string | null; kind: 'ok' | 'error' }>({ busy: false, text: null, kind: 'ok' })
-  const justConnected = params.get('classroom') === '1'
-  const token = session?.provider_token
-
-  const syncClassroom = useCallback(async () => {
-    if (!token) return connectClassroom()
-    setSync({ busy: true, text: 'Importing from Google Classroom…', kind: 'ok' })
-    try {
-      const courses = await fetchClassroomRosters(token)
-      const { data, error } = await supabase.rpc('import_classroom', { p_courses: courses })
-      if (error) throw error
-      const r = data as { created: number; updated: number; newly_enrolled: number; skipped: string[] }
-      const students = courses.reduce((n, c) => n + c.students.length, 0)
-      let text = `Imported ${courses.length} class${courses.length === 1 ? '' : 'es'} and ${students} students from Google Classroom.`
-      if (r.skipped.length) text += ` Skipped ${r.skipped.join(', ')}: another teacher already imported ${r.skipped.length === 1 ? 'it' : 'them'}.`
-      setSync({ busy: false, text, kind: 'ok' })
-      load()
-    } catch (e) {
-      if (e instanceof ClassroomAuthError) return connectClassroom()
-      setSync({ busy: false, text: `Classroom import failed: ${(e as Error).message}`, kind: 'error' })
-    }
-  }, [token, connectClassroom, load])
-
-  // Coming back from the Google consent screen: import straight away, then tidy the URL.
-  useEffect(() => {
-    if (!justConnected || !token || !profile) return
-    setParams({}, { replace: true })
-    syncClassroom()
-  }, [justConnected, token, profile, setParams, syncClassroom])
+  const classroom = useClassroomSync(load)
 
   const addClass = async (e: FormEvent) => {
     e.preventDefault()
@@ -109,10 +79,18 @@ export function TeacherHome() {
       <section>
         <div className="section-head">
           <h2>Classes</h2>
-          <button onClick={syncClassroom} disabled={sync.busy}>{sync.busy ? 'Importing…' : 'Import from Google Classroom'}</button>
+          <span className="row">
+            {classroom.connected === false && <button onClick={classroom.connect}>Connect Google Classroom</button>}
+            {classroom.connected && (
+              <>
+                <button onClick={classroom.syncNow} disabled={classroom.busy}>{classroom.busy ? 'Syncing…' : 'Sync Google Classroom'}</button>
+                <button className="small" onClick={classroom.disconnect} disabled={classroom.busy}>Disconnect</button>
+              </>
+            )}
+          </span>
         </div>
-        {sync.text && <p className={sync.kind} role="status">{sync.text}</p>}
-        {loaded && classes.length === 0 && <p className="muted">No classes yet. Import them from Google Classroom, or make one and give students its join code.</p>}
+        {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
+        {loaded && classes.length === 0 && <p className="muted">No classes yet. Connect Google Classroom to import them, or make one and give students its join code.</p>}
         <ul className="cards">
           {classes.map((c) => (
             <li key={c.id} className="card row">
