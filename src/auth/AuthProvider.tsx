@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
+import { CLASSROOM_SCOPES } from '../lib/classroom'
 
 type AuthState = {
   loading: boolean
@@ -8,6 +9,8 @@ type AuthState = {
   profile: Profile | null
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
+  /** Teacher-only: re-run Google sign-in asking for read access to Classroom courses + rosters. */
+  connectClassroom: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -67,12 +70,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }
 
+  const connectClassroom = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/teacher?classroom=1`,
+        scopes: CLASSROOM_SCOPES,
+        queryParams: { prompt: 'consent', ...(profile?.email ? { login_hint: profile.email } : {}) },
+      },
+    })
+    if (error) throw error
+  }
+
   const signOut = async () => {
     await supabase.auth.signOut()
   }
 
   return (
-    <AuthContext.Provider value={{ loading, session, profile, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ loading, session, profile, signInWithGoogle, signOut, connectClassroom }}>
       {children}
     </AuthContext.Provider>
   )
