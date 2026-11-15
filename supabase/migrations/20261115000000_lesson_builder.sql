@@ -107,4 +107,17 @@ begin
   return lid;
 end $$;
 
+-- New functions are executable by PUBLIC by default (and Supabase also grants anon). Lock that down
+-- for this function and for every function created later in these migrations.
+revoke all on function public.save_lesson(jsonb, jsonb) from public, anon;
 grant execute on function public.save_lesson(jsonb, jsonb) to authenticated;
+alter default privileges revoke execute on functions from public;
+alter default privileges in schema public revoke execute on functions from anon;
+
+-- Fix for the initial migration: it revoked function privileges *before* creating its RPCs, so these
+-- were still executable by PUBLIC/anon. Each one already refuses signed-out callers, but don't rely on that.
+revoke all on function
+  public.join_class(text), public.get_student_lesson(uuid), public.save_progress(uuid, numeric, numeric),
+  public.submit_answer(uuid, uuid, text), public.finish_attempt(uuid), public.grade_answer(uuid, uuid, boolean),
+  public.log_focus_event(uuid, text, numeric)
+from public, anon;
