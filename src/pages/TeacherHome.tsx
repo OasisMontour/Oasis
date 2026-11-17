@@ -11,7 +11,7 @@ type LessonRow = {
   subject: string
   created_at: string
   questions: { count: number }[]
-  assignments: { id: string; class_id: string; due_at: string | null }[]
+  assignments: { id: string; class_id: string; due_at: string | null; google_coursework_id: string | null }[]
 }
 
 export function TeacherHome() {
@@ -28,7 +28,7 @@ export function TeacherHome() {
       supabase.from('classes').select('id, name, enrollments(count), roster_entries(count)').eq('teacher_id', profile.id).order('name'),
       supabase
         .from('lessons')
-        .select('id, title, subject, created_at, questions(count), assignments(id, class_id, due_at)')
+        .select('id, title, subject, created_at, questions(count), assignments(id, class_id, due_at, google_coursework_id)')
         .eq('teacher_id', profile.id)
         .order('created_at', { ascending: false }),
     ])
@@ -114,14 +114,42 @@ function LessonCard({
   const open = classes.filter((c) => !assigned.has(c.id))
   const nQuestions = lesson.questions[0]?.count ?? 0
 
+  const [busy, setBusy] = useState(false)
+
+  /** Post to Google Classroom. The assignment already exists in Oasis, so a failure here is retryable. */
+  const postToClassroom = async (assignmentId: string) => {
+    const { data, error } = await supabase.functions.invoke<{ ok: boolean; error?: string }>('classroom', {
+      body: { action: 'post', assignment_id: assignmentId },
+    })
+    if (error || !data?.ok) {
+      const why = data?.error === 'not_connected' || data?.error === 'reconnect' ? 'Connect Google Classroom first, then click Retry.' : (data?.error ?? error?.message ?? '')
+      onError(`Assigned in Oasis, but posting to Google Classroom failed. ${why}`)
+    }
+  }
+
   const assign = async (e: FormEvent) => {
     e.preventDefault()
-    const { error } = await supabase
+    setBusy(true)
+    const { data, error } = await supabase
       .from('assignments')
       .insert({ lesson_id: lesson.id, class_id: classId, due_at: due ? new Date(due).toISOString() : null })
-    if (error) return onError(error.message)
+      .select('id')
+      .single()
+    if (error) {
+      setBusy(false)
+      return onError(error.message)
+    }
+    await postToClassroom(data.id)
+    setBusy(false)
     setClassId('')
     setDue('')
+    onChange()
+  }
+
+  const retry = async (assignmentId: string) => {
+    setBusy(true)
+    await postToClassroom(assignmentId)
+    setBusy(false)
     onChange()
   }
 
@@ -134,15 +162,22 @@ function LessonCard({
         <Link to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
       </div>
       {lesson.assignments.length > 0 && (
-        <p className="small muted">
-          Assigned to{' '}
-          {lesson.assignments
-            .map((a) => {
-              const name = classes.find((c) => c.id === a.class_id)?.name ?? 'a class'
-              return a.due_at ? `${name} (due ${new Date(a.due_at).toLocaleDateString()})` : name
-            })
-            .join(', ')}
-        </p>
+        <ul className="assigned small">
+          {lesson.assignments.map((a) => (
+            <li key={a.id} className="row">
+              <span>{classes.find((c) => c.id === a.class_id)?.name ?? 'A class'}</span>
+              {a.due_at && <span className="muted">due {new Date(a.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>}
+              {a.google_coursework_id ? (
+                <span className="ok">Posted to Classroom</span>
+              ) : (
+                <>
+                  <span className="error">Not in Classroom yet</span>
+                  <button className="small" onClick={() => retry(a.id)} disabled={busy}>Retry</button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
       {open.length > 0 && (
         <form className="row" onSubmit={assign}>
@@ -155,7 +190,9 @@ function LessonCard({
           <label className="small">
             Due <input type="datetime-local" className="text" value={due} onChange={(e) => setDue(e.target.value)} />
           </label>
-          <button disabled={!classId || nQuestions === 0} title={nQuestions === 0 ? 'Add questions first' : undefined}>Assign</button>
+          <button disabled={busy || !classId || nQuestions === 0} title={nQuestions === 0 ? 'Add questions first' : undefined}>
+            {busy ? 'Posting…' : 'Assign + post to Classroom'}
+          </button>
         </form>
       )}
     </li>

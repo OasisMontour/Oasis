@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
       clientId: Deno.env.get('GOOGLE_CLIENT_ID')!,
       clientSecret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
       encKey: Deno.env.get('TOKEN_ENCRYPTION_KEY')!,
+      appOrigin: Deno.env.get('APP_ORIGIN')!,
     },
     async getCaller(authHeader) {
       const c = asCaller(authHeader)
@@ -53,6 +54,20 @@ Deno.serve(async (req) => {
     },
     async importClassroom(authHeader, courses) {
       return must(await asCaller(authHeader).rpc('import_classroom', { p_courses: courses })) as SyncResult
+    },
+    async getAssignment(authHeader, id) {
+      const row = must(
+        await asCaller(authHeader)
+          .from('assignments')
+          .select('id, due_at, google_coursework_id, lessons(title), classes(google_course_id, teacher_id)')
+          .eq('id', id)
+          .maybeSingle(),
+      ) as null | { id: string; due_at: string | null; google_coursework_id: string | null; lessons: { title: string }; classes: { google_course_id: string } }
+      if (!row) return null
+      return { id: row.id, lessonTitle: row.lessons.title, courseId: row.classes.google_course_id, dueAt: row.due_at, courseworkId: row.google_coursework_id }
+    },
+    async setCourseworkId(authHeader, id, cwid) {
+      must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id))
     },
   })
   for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)

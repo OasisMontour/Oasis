@@ -34,7 +34,8 @@ One-time steps to get Oasis running against a real Supabase project. About 30 mi
    supabase functions deploy classroom
    ```
    Back up `TOKEN_ENCRYPTION_KEY` somewhere safe (password manager). Lose it and every teacher has to reconnect; leak it together with a database dump and their Classroom access leaks.
-4. Students never see these scopes. A teacher clicks **Connect Google Classroom** once; after that the dashboard re-syncs rosters on its own whenever it's been more than 6 hours.
+4. Assigning a lesson posts it to the class's Classroom stream with a link to `APP_ORIGIN/student/assignments/<id>`, so `APP_ORIGIN` must be the real app URL.
+5. Students never see these scopes. A teacher clicks **Connect Google Classroom** once; after that the dashboard re-syncs rosters on its own whenever it's been more than 6 hours.
 
 These are sensitive scopes, so outside the district's trusted-app setting Google shows an "unverified app" warning until the app is verified. Submit for verification early, and ask district IT to trust the client ID (step 5 above covers both).
 
