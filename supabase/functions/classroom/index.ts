@@ -66,6 +66,22 @@ Deno.serve(async (req) => {
       if (!row) return null
       return { id: row.id, lessonTitle: row.lessons.title, courseId: row.classes.google_course_id, dueAt: row.due_at, courseworkId: row.google_coursework_id }
     },
+    async getGradesToPush(authHeader, id) {
+      const row = must(
+        await asCaller(authHeader)
+          .from('assignments')
+          .select('id, google_coursework_id, classes(google_course_id), attempts(score, finished_at, profiles(email))')
+          .eq('id', id)
+          .maybeSingle(),
+      ) as null | {
+        google_coursework_id: string | null
+        classes: { google_course_id: string }
+        attempts: { score: number | null; finished_at: string | null; profiles: { email: string } | null }[]
+      }
+      if (!row) return null
+      const grades = row.attempts.flatMap((a) => (a.finished_at && a.score !== null && a.profiles?.email ? [{ email: a.profiles.email, score: Number(a.score) }] : []))
+      return { courseId: row.classes.google_course_id, courseworkId: row.google_coursework_id, grades }
+    },
     async setCourseworkId(authHeader, id, cwid) {
       must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id))
     },

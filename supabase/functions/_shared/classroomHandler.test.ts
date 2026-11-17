@@ -6,11 +6,18 @@ import { decryptToken, encryptToken } from './tokenCrypto.ts'
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)))
 
-function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean } = {}) {
+function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; failGradeFor?: string[] } = {}) {
   const store = new Map<string, string>()
   const calls: string[] = []
   const imported: unknown[] = []
   const posted: { url: string; body: Record<string, unknown> }[] = []
+  let roster: unknown[] = [{ profile: { emailAddress: 'kid@d.org', name: { fullName: 'Kid' } } }]
+  const patched: { url: string; body: Record<string, unknown> }[] = []
+  const grades = [
+    { email: 'Ann@d.org', score: 90.46 },
+    { email: 'bob@d.org', score: 70 },
+    { email: 'ghost@d.org', score: 50 },
+  ]
   const asg = { id: 'as1', lessonTitle: 'Cells', courseId: 'gc1', dueAt: '2026-12-08T04:59:00.000Z', courseworkId: null as string | null }
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
@@ -26,7 +33,13 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
       posted.push({ url, body: JSON.parse(String(init.body)) })
       return Response.json({ id: 'cw1' })
     }
-    if (url.includes('/students')) return Response.json({ students: [{ profile: { emailAddress: 'kid@d.org', name: { fullName: 'Kid' } } }] })
+    if (url.includes('/studentSubmissions') && init?.method === 'PATCH') {
+      if ((opts.failGradeFor ?? []).some((id) => url.includes(`/studentSubmissions/${id}?`))) return Response.json({ error: { message: 'nope' } }, { status: 403 })
+      patched.push({ url, body: JSON.parse(String(init.body)) })
+      return Response.json({})
+    }
+    if (url.includes('/studentSubmissions')) return Response.json({ studentSubmissions: [{ id: 'sub-ann', userId: 'u-ann' }, { id: 'sub-bob', userId: 'u-bob' }] })
+    if (url.includes('/students')) return Response.json({ students: roster })
     if (url.includes('/courses')) return Response.json({ courses: [{ id: 'gc1', name: 'Bio', section: 'P2' }] })
     return new Response('', { status: 404 })
   }) as typeof fetch
@@ -43,13 +56,14 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
       return { created: 1, updated: 0, newly_enrolled: 0, removed: 0, skipped: [] }
     },
     getAssignment: async (_h, id) => (id === asg.id ? { ...asg } : null),
+    getGradesToPush: async (_h, id) => (id === asg.id ? { courseId: asg.courseId, courseworkId: asg.courseworkId, grades: [...grades] } : null),
     setCourseworkId: async (_h, _id, cw) => void (asg.courseworkId = cw),
   }
   const call = async (body: unknown, auth = 'Bearer jwt') => {
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { store, calls, imported, posted, asg, call }
+  return { setRoster: (r: unknown[]) => void (roster = r), store, calls, imported, posted, patched, grades, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -147,6 +161,54 @@ describe('auto-post to Classroom', () => {
     expect((await t.call({ action: 'post', assignment_id: 'nope' })).status).toBe(404)
     expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_connected' })
     expect(t.posted).toHaveLength(0)
+  })
+})
+
+describe('push grades', () => {
+  const ready = async (opts: Parameters<typeof setup>[0] = {}) => {
+    const t = setup(opts)
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    t.asg.courseworkId = 'cw1'
+    t.setRoster([{ userId: 'u-ann', profile: { emailAddress: 'ANN@d.org' } }, { userId: 'u-bob', profile: { emailAddress: 'bob@d.org' } }])
+    return t
+  }
+
+  it('patches draft and assigned grade, rounded, and reports unknown students', async () => {
+    const t = await ready()
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body).toEqual({ ok: true, pushed: 2, not_in_classroom: ['ghost@d.org'], failed: [] })
+    const byUrl = Object.fromEntries(t.patched.map((p) => [p.url, p.body]))
+    const base = 'https://classroom.googleapis.com/v1/courses/gc1/courseWork/cw1/studentSubmissions'
+    expect(byUrl[`${base}/sub-ann?updateMask=assignedGrade,draftGrade`]).toEqual({ assignedGrade: 90.5, draftGrade: 90.5 })
+    expect(byUrl[`${base}/sub-bob?updateMask=assignedGrade,draftGrade`]).toEqual({ assignedGrade: 70, draftGrade: 70 })
+  })
+
+  it('only sends the grades it is given (unfinished students are left out)', async () => {
+    const t = await ready()
+    t.grades.splice(1)
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body).toMatchObject({ pushed: 1, not_in_classroom: [] })
+    expect(t.patched).toHaveLength(1)
+  })
+
+  it("one student's failure doesn't stop the others", async () => {
+    const t = await ready({ failGradeFor: ['sub-ann'] })
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body.ok).toBe(true)
+    expect(r.body.pushed).toBe(1)
+    expect(r.body.failed).toHaveLength(1)
+    expect(r.body.failed[0]).toMatchObject({ email: 'Ann@d.org' })
+    expect(r.body.failed[0].error).toContain('403')
+    expect(t.patched).toHaveLength(1)
+  })
+
+  it('needs the assignment posted, a connection, and ownership', async () => {
+    const t = setup()
+    expect((await t.call({ action: 'push_grades', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_posted' })
+    t.asg.courseworkId = 'cw1'
+    expect((await t.call({ action: 'push_grades', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_connected' })
+    expect((await t.call({ action: 'push_grades', assignment_id: 'nope' })).status).toBe(404)
+    expect(t.patched).toHaveLength(0)
   })
 })
 
