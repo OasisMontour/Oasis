@@ -51,7 +51,8 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; 
     saveToken: async (u, enc) => void store.set(u, enc),
     deleteToken: async (u) => void store.delete(u),
     markUsed: async () => {},
-    importClassroom: async (_h, courses) => {
+    importClassroom: async (teacherId, courses) => {
+      expect(teacherId).toBe('teacher-1')
       imported.push(courses)
       return { created: 1, updated: 0, newly_enrolled: 0, removed: 0, skipped: [] }
     },
