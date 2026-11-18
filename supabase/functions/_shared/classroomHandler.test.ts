@@ -34,7 +34,7 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
     markUsed: async () => {},
     importClassroom: async (_h, courses) => {
       imported.push(courses)
-      return { created: 1, updated: 0, newly_enrolled: 0, skipped: [] }
+      return { created: 1, updated: 0, newly_enrolled: 0, removed: 0, skipped: [] }
     },
   }
   const call = async (body: unknown, auth = 'Bearer jwt') => {

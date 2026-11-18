@@ -8,7 +8,7 @@ const AUTO_SYNC_AFTER_MS = 6 * 60 * 60 * 1000
 
 type Status = { connected: boolean; last_synced_at: string | null }
 type FnResult =
-  | { ok: true; courses: number; students: number; created: number; updated: number; newly_enrolled: number; skipped: string[] }
+  | { ok: true; courses: number; students: number; created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[] }
   | { ok: false; error: string; missing?: string[] }
 
 export type ClassroomSync = {
@@ -55,9 +55,10 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
       }
       setStatus({ connected: true, last_synced_at: new Date().toISOString() })
       let text = `Synced ${data.courses} class${data.courses === 1 ? '' : 'es'} and ${data.students} students from Google Classroom.`
+      if (data.removed) text += ` Removed ${data.removed} student${data.removed === 1 ? '' : 's'} no longer in Classroom.`
       if (data.skipped.length)
         text += ` Skipped ${data.skipped.join(', ')}: another teacher already imported ${data.skipped.length === 1 ? 'it' : 'them'}.`
-      if (!quiet || data.created || data.newly_enrolled || data.skipped.length) setMessage({ kind: 'ok', text })
+      if (!quiet || data.created || data.newly_enrolled || data.removed || data.skipped.length) setMessage({ kind: 'ok', text })
       onImported()
     },
     [onImported],

@@ -40,11 +40,17 @@ create function tests.become(uid text) returns void language sql as $$
 $$;
 grant execute on function tests.become(text) to authenticated;
 
--- ---------- teacher 1 builds a class + lesson
+-- classes + enrollments only come from Google Classroom (import_classroom); set them up directly here.
+insert into classes (id, teacher_id, name, google_course_id)
+  values ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a1', 'Period 3 Business', 'gc-fixture');
+insert into enrollments (class_id, student_id) values
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000b1'),
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000b2');
+
+-- ---------- teacher 1 builds a lesson and assigns it
 begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000a1');
-insert into classes (id, teacher_id, name) values ('10000000-0000-0000-0000-000000000001', auth.uid(), 'Period 3 Business');
 insert into lessons (id, teacher_id, title, subject, youtube_id, duration_s)
   values ('20000000-0000-0000-0000-000000000001', auth.uid(), 'Supply and demand', 'Business', 'dQw4w9WgXcQ', 100);
 insert into questions (id, lesson_id, at_s, kind, prompt, choices, correct_index) values
@@ -53,19 +59,9 @@ insert into questions (id, lesson_id, at_s, kind, prompt) values
   ('30000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000001', 50, 'short', 'Explain demand.');
 insert into assignments (id, lesson_id, class_id)
   values ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001');
-select tests.ok(tests.throws($$select join_class('XXXXXX')$$), 'teacher cannot join a class as student');
-commit;
-
-select join_code as code from classes where id = '10000000-0000-0000-0000-000000000001' \gset
-
--- ---------- students join
-begin;
-set local role authenticated;
-select tests.become('00000000-0000-0000-0000-0000000000b1');
-select tests.ok(tests.throws($$select join_class('NOPE00')$$), 'bad join code is rejected');
-select join_class(lower(:'code'));
-select tests.become('00000000-0000-0000-0000-0000000000b2');
-select join_class(:'code');
+select tests.ok(tests.throws($$insert into classes (teacher_id, name, google_course_id) values (auth.uid(), 'manual', 'x')$$), 'teacher cannot create a class by hand');
+select tests.ok(tests.throws($$update classes set name = 'renamed'$$), 'teacher cannot rename a Classroom class');
+select tests.ok(tests.throws($$delete from enrollments$$), 'teacher cannot remove students by hand');
 commit;
 
 -- ---------- student 1: what they can and cannot see/do
@@ -81,8 +77,7 @@ select tests.ok(tests.throws($$insert into answers (attempt_id, question_id, res
 select tests.ok(tests.throws($$update attempts set max_watched_s = 100$$), 'student cannot update attempts directly');
 select tests.ok(tests.throws($$insert into classes (teacher_id, name) values (auth.uid(), 'fake')$$), 'student cannot create a class');
 select tests.ok(tests.throws($$update profiles set role = 'teacher' where id = auth.uid()$$), 'student cannot make themselves a teacher');
-update profiles set name = 'S. One' where id = auth.uid();
-select tests.ok((select name from profiles where id = auth.uid()) = 'S. One', 'student can edit own name');
+select tests.ok(tests.throws($$update profiles set name = 'Fake Name' where id = auth.uid()$$), 'student cannot change the name from their Google account');
 select tests.ok(tests.throws($$select * from teacher_allowlist$$), 'student cannot read the teacher allowlist');
 select tests.ok((select count(*) from profiles) = 1, 'student sees only their own profile');
 commit;
@@ -184,7 +179,7 @@ select tests.ok((select title from lessons where id = '20000000-0000-0000-0000-0
 begin;
 set local role anon;
 select tests.ok(tests.throws($$select * from classes$$), 'signed-out users cannot read tables');
-select tests.ok(tests.throws($$select join_class('ABC123')$$), 'signed-out users cannot call RPCs');
+select tests.ok(tests.throws($$select get_student_lesson('40000000-0000-0000-0000-000000000001')$$), 'signed-out users cannot call RPCs');
 commit;
 
 \echo 'ALL RLS TESTS PASSED'

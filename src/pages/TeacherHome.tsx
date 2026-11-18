@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import { useClassroomSync } from '../lib/useClassroomSync'
 
-type ClassRow = { id: string; name: string; join_code: string; google_course_id: string | null; enrollments: { count: number }[] }
+type ClassRow = { id: string; name: string; enrollments: { count: number }[]; roster_entries: { count: number }[] }
 type LessonRow = {
   id: string
   title: string
@@ -20,13 +20,12 @@ export function TeacherHome() {
   const [lessons, setLessons] = useState<LessonRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [newClass, setNewClass] = useState('')
 
   const load = useCallback(async () => {
     if (!profile) return
     // teacher_id filter matters: RLS also lets teachers read *shared* lessons from other teachers.
     const [c, l] = await Promise.all([
-      supabase.from('classes').select('id, name, join_code, google_course_id, enrollments(count)').eq('teacher_id', profile.id).order('name'),
+      supabase.from('classes').select('id, name, enrollments(count), roster_entries(count)').eq('teacher_id', profile.id).order('name'),
       supabase
         .from('lessons')
         .select('id, title, subject, created_at, questions(count), assignments(id, class_id, due_at)')
@@ -44,14 +43,6 @@ export function TeacherHome() {
   }, [load])
 
   const classroom = useClassroomSync(load)
-
-  const addClass = async (e: FormEvent) => {
-    e.preventDefault()
-    const { error } = await supabase.from('classes').insert({ teacher_id: profile!.id, name: newClass.trim() })
-    if (error) return setError(error.message)
-    setNewClass('')
-    load()
-  }
 
   return (
     <main className="page">
@@ -90,22 +81,17 @@ export function TeacherHome() {
           </span>
         </div>
         {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
-        {loaded && classes.length === 0 && <p className="muted">No classes yet. Connect Google Classroom to import them, or make one and give students its join code.</p>}
+        {loaded && classes.length === 0 && <p className="muted">No classes yet. Your classes and students come from Google Classroom: connect it above and they'll show up here.</p>}
         <ul className="cards">
           {classes.map((c) => (
             <li key={c.id} className="card row">
               <strong>{c.name}</strong>
-              <span className="muted small">{c.enrollments[0]?.count ?? 0} students</span>
-              {!c.google_course_id && <span className="small">Join code <code>{c.join_code}</code></span>}
-              {c.google_course_id && <span className="muted small">From Google Classroom</span>}
+              <span className="muted small">
+                {c.roster_entries[0]?.count ?? 0} students, {c.enrollments[0]?.count ?? 0} signed in
+              </span>
             </li>
           ))}
         </ul>
-        <form className="join" onSubmit={addClass}>
-          <label htmlFor="new-class">New class</label>
-          <input id="new-class" className="text" value={newClass} onChange={(e) => setNewClass(e.target.value)} placeholder="Period 3 Biology" maxLength={120} />
-          <button disabled={!newClass.trim()}>Add class</button>
-        </form>
       </section>
     </main>
   )

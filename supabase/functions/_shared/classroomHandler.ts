@@ -10,7 +10,7 @@ import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
 import { fetchClassroomRosters, InvalidGrantError, refreshAccessToken, revokeToken, type ImportCourse } from './google.ts'
 
-export type SyncResult = { created: number; updated: number; newly_enrolled: number; skipped: string[] }
+export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[] }
 
 export type Deps = {
   fetch: typeof fetch

@@ -27,9 +27,10 @@ CI runs all of these on every PR. Nothing merges to `main` without a passing CI 
 
 ## How the data is protected
 
-- RLS is on for every table. Students never write tables directly: they go through RPCs (`save_lesson` for teachers; `join_class`, `get_student_lesson`, `save_progress`, `submit_answer`, `finish_attempt`, `log_focus_event`).
+- RLS is on for every table. Students never write tables directly: they go through RPCs (`save_lesson` and `import_classroom` for teachers; `get_student_lesson`, `save_progress`, `submit_answer`, `finish_attempt`, `log_focus_event`).
 - Students can't read correct answers. The `questions` table is teacher-only; the player gets questions from `get_student_lesson`, which leaves answers out.
 - Scores are computed in the database. `save_progress` rejects skipping ahead: past an unanswered question, faster than real time, or past the end of the video.
+- Classes and rosters only come from Google Classroom. No manual classes, join codes, or roster edits.
 - Teachers are whoever is on `teacher_allowlist`. Everyone else who signs in is a student. Role can't be changed from the browser.
 
 Every one of those rules has a test in `supabase/tests/10_rls_test.sql`. Change a policy, add a test.
