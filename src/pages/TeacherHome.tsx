@@ -175,6 +175,7 @@ function LessonCard({
                   <button className="small" onClick={() => retry(a.id)} disabled={busy}>Retry</button>
                 </>
               )}
+              <Link to={`/teacher/assignments/${a.id}`}>Results</Link>
             </li>
           ))}
         </ul>
