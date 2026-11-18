@@ -10,6 +10,8 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
   const store = new Map<string, string>()
   const calls: string[] = []
   const imported: unknown[] = []
+  const posted: { url: string; body: Record<string, unknown> }[] = []
+  const asg = { id: 'as1', lessonTitle: 'Cells', courseId: 'gc1', dueAt: '2026-12-08T04:59:00.000Z', courseworkId: null as string | null }
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     calls.push(url.split('?')[0])
@@ -20,13 +22,17 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
     }
     if (url.startsWith('https://oauth2.googleapis.com/revoke')) return new Response('')
     if ((init?.headers as Record<string, string>)?.Authorization !== 'Bearer acc') return new Response('', { status: 401 })
+    if (url.includes('/courseWork') && init?.method === 'POST') {
+      posted.push({ url, body: JSON.parse(String(init.body)) })
+      return Response.json({ id: 'cw1' })
+    }
     if (url.includes('/students')) return Response.json({ students: [{ profile: { emailAddress: 'kid@d.org', name: { fullName: 'Kid' } } }] })
     if (url.includes('/courses')) return Response.json({ courses: [{ id: 'gc1', name: 'Bio', section: 'P2' }] })
     return new Response('', { status: 404 })
   }) as typeof fetch
   const deps: Deps = {
     fetch: fakeFetch,
-    env: { clientId: 'cid', clientSecret: 'sec', encKey: KEY },
+    env: { clientId: 'cid', clientSecret: 'sec', encKey: KEY, appOrigin: 'https://oasis.test/' },
     getCaller: async (h) => (h === 'Bearer jwt' ? { id: 'teacher-1', isTeacher: opts.teacher ?? true } : null),
     loadToken: async (u) => store.get(u) ?? null,
     saveToken: async (u, enc) => void store.set(u, enc),
@@ -34,14 +40,16 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean }
     markUsed: async () => {},
     importClassroom: async (_h, courses) => {
       imported.push(courses)
-      return { created: 1, updated: 0, newly_enrolled: 0, skipped: [] }
+      return { created: 1, updated: 0, newly_enrolled: 0, removed: 0, skipped: [] }
     },
+    getAssignment: async (_h, id) => (id === asg.id ? { ...asg } : null),
+    setCourseworkId: async (_h, _id, cw) => void (asg.courseworkId = cw),
   }
   const call = async (body: unknown, auth = 'Bearer jwt') => {
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { store, calls, imported, call }
+  return { store, calls, imported, posted, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -94,6 +102,51 @@ describe('classroom edge function', () => {
     expect((await setup().call({ action: 'sync' }, '')).status).toBe(401)
     expect((await setup().call({ action: 'sync' }, 'Bearer forged')).status).toBe(401)
     expect((await setup({ teacher: false }).call({ action: 'sync' })).status).toBe(403)
+  })
+})
+
+describe('auto-post to Classroom', () => {
+  it('posts the assignment with a link, due date in UTC and 100 points, then records the coursework id', async () => {
+    const t = setup()
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    const r = await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(r.body).toEqual({ ok: true, coursework_id: 'cw1' })
+    expect(t.posted).toHaveLength(1)
+    expect(t.posted[0].url).toBe('https://classroom.googleapis.com/v1/courses/gc1/courseWork')
+    expect(t.posted[0].body).toMatchObject({
+      title: 'Cells',
+      workType: 'ASSIGNMENT',
+      state: 'PUBLISHED',
+      maxPoints: 100,
+      materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }],
+      dueDate: { year: 2026, month: 12, day: 8 },
+      dueTime: { hours: 4, minutes: 59 },
+    })
+    expect(t.asg.courseworkId).toBe('cw1')
+  })
+
+  it('never posts the same assignment twice', async () => {
+    const t = setup()
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    const r = await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(r.body).toMatchObject({ ok: true, already: true })
+    expect(t.posted).toHaveLength(1)
+  })
+
+  it('omits the due date when there is none', async () => {
+    const t = setup()
+    t.asg.dueAt = null
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(t.posted[0].body).not.toHaveProperty('dueDate')
+  })
+
+  it("refuses someone else's assignment and needs a connection", async () => {
+    const t = setup()
+    expect((await t.call({ action: 'post', assignment_id: 'nope' })).status).toBe(404)
+    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_connected' })
+    expect(t.posted).toHaveLength(0)
   })
 })
 

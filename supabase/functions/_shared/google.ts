@@ -69,3 +69,33 @@ export async function fetchClassroomRosters(f: typeof fetch, token: string): Pro
     }),
   )
 }
+
+export type CourseworkInput = { title: string; description: string; link: string; dueAt: string | null }
+
+/**
+ * Posts an assignment to a Classroom course. Due dates go to Classroom in UTC, which is what its API wants.
+ * maxPoints is 100 so grade sync can pass the Oasis score straight through.
+ */
+export async function createCoursework(f: typeof fetch, token: string, courseId: string, cw: CourseworkInput): Promise<string> {
+  const body: Record<string, unknown> = {
+    title: cw.title.slice(0, 3000),
+    description: cw.description,
+    materials: [{ link: { url: cw.link } }],
+    workType: 'ASSIGNMENT',
+    state: 'PUBLISHED',
+    maxPoints: 100,
+  }
+  if (cw.dueAt) {
+    const d = new Date(cw.dueAt)
+    body.dueDate = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }
+    body.dueTime = { hours: d.getUTCHours(), minutes: d.getUTCMinutes() }
+  }
+  const res = await f(`https://classroom.googleapis.com/v1/courses/${encodeURIComponent(courseId)}/courseWork`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const out = (await res.json().catch(() => ({}))) as { id?: string; error?: { message?: string } }
+  if (!res.ok || !out.id) throw new Error(`Google Classroom couldn't post the assignment (${res.status}${out.error?.message ? `: ${out.error.message}` : ''})`)
+  return out.id
+}

@@ -3,18 +3,21 @@
 // POST { action: 'connect', refresh_token } -> verifies + stores the teacher's Google refresh token, then syncs
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
+// POST { action: 'post', assignment_id }    -> posts an Oasis assignment to its Classroom course (idempotent)
 //
 // Business errors come back as 200 { ok: false, error } so the browser can show a message.
 
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
-import { fetchClassroomRosters, InvalidGrantError, refreshAccessToken, revokeToken, type ImportCourse } from './google.ts'
+import { createCoursework, fetchClassroomRosters, InvalidGrantError, refreshAccessToken, revokeToken, type ImportCourse } from './google.ts'
 
-export type SyncResult = { created: number; updated: number; newly_enrolled: number; skipped: string[] }
+export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[] }
+
+export type AssignmentToPost = { id: string; lessonTitle: string; courseId: string; dueAt: string | null; courseworkId: string | null }
 
 export type Deps = {
   fetch: typeof fetch
-  env: { clientId: string; clientSecret: string; encKey: string }
+  env: { clientId: string; clientSecret: string; encKey: string; appOrigin: string }
   /** Resolves the caller from their Supabase JWT; null if not signed in. */
   getCaller(authHeader: string): Promise<{ id: string; isTeacher: boolean } | null>
   loadToken(userId: string): Promise<string | null>
@@ -23,7 +26,14 @@ export type Deps = {
   markUsed(userId: string): Promise<void>
   /** Calls import_classroom as the caller (their JWT), so the RPC's own checks apply. */
   importClassroom(authHeader: string, courses: ImportCourse[]): Promise<SyncResult>
+  /** Read as the caller, so RLS guarantees it's their own assignment. null if not found/not theirs. */
+  getAssignment(authHeader: string, assignmentId: string): Promise<AssignmentToPost | null>
+  /** Written as the caller. */
+  setCourseworkId(authHeader: string, assignmentId: string, courseworkId: string): Promise<void>
 }
+
+/** Where a Classroom assignment sends students. The student player must serve this route. */
+export const studentAssignmentUrl = (origin: string, assignmentId: string) => `${origin.replace(/\/$/, '')}/student/assignments/${assignmentId}`
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -35,7 +45,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
   if (!caller) return json({ ok: false, error: 'not signed in' }, 401)
   if (!caller.isTeacher) return json({ ok: false, error: 'teachers only' }, 403)
 
-  let body: { action?: string; refresh_token?: string }
+  let body: { action?: string; refresh_token?: string; assignment_id?: string }
   try {
     body = await req.json()
   } catch {
@@ -47,6 +57,22 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     const result = await d.importClassroom(auth, courses)
     await d.markUsed(caller.id)
     return json({ ok: true, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
+  }
+
+  /** Access token from the stored refresh token, or a ready-made "reconnect"/"not_connected" response. */
+  const storedAccess = async (): Promise<{ token: string } | { res: Response }> => {
+    const enc = await d.loadToken(caller.id)
+    if (!enc) return { res: json({ ok: false, error: 'not_connected' }) }
+    try {
+      const t = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, await decryptToken(enc, d.env.encKey, caller.id))
+      return { token: t.accessToken }
+    } catch (e) {
+      if (e instanceof InvalidGrantError) {
+        await d.deleteToken(caller.id)
+        return { res: json({ ok: false, error: 'reconnect' }) }
+      }
+      throw e
+    }
   }
 
   try {
@@ -67,19 +93,27 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     }
 
     if (body.action === 'sync') {
-      const enc = await d.loadToken(caller.id)
-      if (!enc) return json({ ok: false, error: 'not_connected' })
-      let token
-      try {
-        token = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, await decryptToken(enc, d.env.encKey, caller.id))
-      } catch (e) {
-        if (e instanceof InvalidGrantError) {
-          await d.deleteToken(caller.id)
-          return json({ ok: false, error: 'reconnect' })
-        }
-        throw e
-      }
-      return await sync(token.accessToken)
+      const a = await storedAccess()
+      return 'res' in a ? a.res : await sync(a.token)
+    }
+
+    if (body.action === 'post') {
+      const id = body.assignment_id
+      if (!id || typeof id !== 'string') return json({ ok: false, error: 'missing assignment_id' }, 400)
+      const asg = await d.getAssignment(auth, id)
+      if (!asg) return json({ ok: false, error: 'not your assignment' }, 404)
+      if (asg.courseworkId) return json({ ok: true, coursework_id: asg.courseworkId, already: true })
+      const a = await storedAccess()
+      if ('res' in a) return a.res
+      const cwid = await createCoursework(d.fetch, a.token, asg.courseId, {
+        title: asg.lessonTitle,
+        description: 'Video lesson in Oasis. Open the link, watch the whole video, and answer the questions as they come up.',
+        link: studentAssignmentUrl(d.env.appOrigin, asg.id),
+        dueAt: asg.dueAt,
+      })
+      await d.setCourseworkId(auth, asg.id, cwid)
+      await d.markUsed(caller.id)
+      return json({ ok: true, coursework_id: cwid })
     }
 
     if (body.action === 'disconnect') {

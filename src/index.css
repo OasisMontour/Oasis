@@ -40,3 +40,4 @@ button.danger { color: var(--danger); }
 .builder .bar { position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 1; }
 code { background: #eef3f1; padding: 2px 6px; border-radius: 6px; letter-spacing: .1em; }
 .stack > button { justify-self: start; }
+.assigned { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 4px; }

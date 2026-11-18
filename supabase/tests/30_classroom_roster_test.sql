@@ -26,8 +26,9 @@ select tests.ok(exists (select 1 from enrollments e join classes c on c.id = e.c
 select import_classroom('[{"id":"gc-1","name":"Biology Honors","students":[{"email":"new.kid@district.org","name":"New Kid"}]}]') as r2 \gset
 select tests.ok((:'r2'::jsonb ->> 'updated')::int = 1 and (:'r2'::jsonb ->> 'created')::int = 0, 're-import updates instead of duplicating');
 select tests.ok((select name from classes where google_course_id = 'gc-1') = 'Biology Honors', 're-import picks up renames');
-select tests.ok(exists (select 1 from enrollments e join classes c on c.id = e.class_id
-  where c.google_course_id = 'gc-1' and e.student_id = '00000000-0000-0000-0000-0000000000b3'), 're-import never removes an existing enrollment');
+select tests.ok(not exists (select 1 from enrollments e join classes c on c.id = e.class_id
+  where c.google_course_id = 'gc-1' and e.student_id = '00000000-0000-0000-0000-0000000000b3'), 're-import removes students who left the Classroom course');
+select tests.ok((:'r2'::jsonb ->> 'removed')::int = 1, 're-import reports how many were removed');
 commit;
 
 -- a brand new student signs in for the first time -> auto-enrolled
@@ -58,5 +59,16 @@ select tests.ok(tests.throws($$select import_classroom('[]')$$), 'students canno
 select tests.ok((select count(*) from roster_entries) = 0, 'students cannot read rosters');
 commit;
 select tests.ok((select teacher_id from classes where google_course_id = 'gc-1') = '00000000-0000-0000-0000-0000000000a1', 'course stays with the first teacher');
+
+-- student 1 leaves the fixture course: loses access, but teacher 1 still sees their past work by name
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000a1');
+select import_classroom('[{"id":"gc-fixture","name":"Period 3 Business","students":[{"email":"s2@district.org"}]}]');
+select tests.ok((select count(*) from attempts where student_id = '00000000-0000-0000-0000-0000000000b1') = 1, 'teacher keeps results of a student who left');
+select tests.ok((select count(*) from profiles where id = '00000000-0000-0000-0000-0000000000b1') = 1, 'teacher still sees that student''s name');
+select tests.become('00000000-0000-0000-0000-0000000000b1');
+select tests.ok(tests.throws($$select get_student_lesson('40000000-0000-0000-0000-000000000001')$$), 'student who left can no longer open the class''s lessons');
+commit;
 
 \echo 'ALL CLASSROOM ROSTER TESTS PASSED'
