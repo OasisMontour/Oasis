@@ -6,7 +6,8 @@ import { handleClassroom, type SyncResult } from '../_shared/classroomHandler.ts
 
 const url = Deno.env.get('SUPABASE_URL')!
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!
-// Service role is used ONLY for the google_tokens table. Everything else runs as the caller.
+// Service role is used ONLY for the google_tokens table and import_classroom_for (rosters must come from
+// Google, so browsers can't call it). Everything else runs as the caller.
 const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
 const asCaller = (authHeader: string) =>
   createClient(url, anon, { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } })
@@ -52,8 +53,8 @@ Deno.serve(async (req) => {
     async markUsed(userId) {
       must(await admin.from('google_tokens').update({ last_used_at: new Date().toISOString() }).eq('user_id', userId))
     },
-    async importClassroom(authHeader, courses) {
-      return must(await asCaller(authHeader).rpc('import_classroom', { p_courses: courses })) as SyncResult
+    async importClassroom(teacherId, courses) {
+      return must(await admin.rpc('import_classroom_for', { p_teacher: teacherId, p_courses: courses })) as SyncResult
     },
     async getAssignment(authHeader, id) {
       const row = must(

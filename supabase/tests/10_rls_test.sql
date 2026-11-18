@@ -85,12 +85,12 @@ commit;
 select id as att1 from attempts where student_id = '00000000-0000-0000-0000-0000000000b1' \gset
 
 -- ---------- no-skip enforcement
--- pretend an hour passed so the wall-clock limit is not what stops us
-update attempts set updated_at = now() - interval '1 hour' where id = :'att1';
+-- pretend time passed so the watch-credit bucket is full (30s) and isn't what stops us
+update attempts set credit_at = now() - interval '1 hour' where id = :'att1';
 begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');
-select tests.ok(tests.throws(format($$select save_progress(%L, 90, 90)$$, :'att1')), 'cannot save progress past an unanswered question');
+select tests.ok(tests.throws(format($$select save_progress(%L, 25, 25)$$, :'att1')), 'cannot save progress past an unanswered question');
 select save_progress(:'att1', 11, 11);
 select tests.ok(tests.throws(format($$select submit_answer(%L, '30000000-0000-0000-0000-000000000002', 'early')$$, :'att1')), 'cannot answer a question not reached yet');
 select tests.ok(submit_answer(:'att1', '30000000-0000-0000-0000-000000000001', '1') = true, 'correct MC answer is auto-graded right');
@@ -98,7 +98,13 @@ select tests.ok(tests.throws(format($$select submit_answer(%L, '30000000-0000-00
 select tests.ok(tests.throws(format($$select finish_attempt(%L)$$, :'att1')), 'cannot finish before the end of the video');
 commit;
 
-update attempts set updated_at = now() - interval '1 hour' where id = :'att1';
+update attempts set credit_at = now() - interval '1 hour' where id = :'att1';
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000b1');
+select save_progress(:'att1', 41, 41);
+commit;
+update attempts set credit_at = now() - interval '1 hour' where id = :'att1';
 begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');
@@ -114,7 +120,13 @@ select tests.become('00000000-0000-0000-0000-0000000000b1');
 select tests.ok(tests.throws(format($$select save_progress(%L, 100, 100)$$, :'att1')), 'progress cannot outrun real time');
 commit;
 
-update attempts set updated_at = now() - interval '1 hour' where id = :'att1';
+update attempts set credit_at = now() - interval '1 hour' where id = :'att1';
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000b1');
+select save_progress(:'att1', 81, 81);
+commit;
+update attempts set credit_at = now() - interval '1 hour' where id = :'att1';
 begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');

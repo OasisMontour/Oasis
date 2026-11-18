@@ -38,8 +38,11 @@ export type Deps = {
   saveToken(userId: string, enc: string, scopes: string): Promise<void>
   deleteToken(userId: string): Promise<void>
   markUsed(userId: string): Promise<void>
-  /** Calls import_classroom as the caller (their JWT), so the RPC's own checks apply. */
-  importClassroom(authHeader: string, courses: ImportCourse[]): Promise<SyncResult>
+  /**
+   * Calls import_classroom_for with the service role. Only this function may write rosters, and only with
+   * data it just fetched from Google using the teacher's own token, for the teacher id it verified.
+   */
+  importClassroom(teacherId: string, courses: ImportCourse[]): Promise<SyncResult>
   /** Read as the caller, so RLS guarantees it's their own assignment. null if not found/not theirs. */
   getAssignment(authHeader: string, assignmentId: string): Promise<AssignmentToPost | null>
   /** Read as the caller. null if not found/not theirs. Only finished attempts with a score. */
@@ -70,7 +73,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
 
   const sync = async (accessToken: string) => {
     const courses = await fetchClassroomRosters(d.fetch, accessToken)
-    const result = await d.importClassroom(auth, courses)
+    const result = await d.importClassroom(caller.id, courses)
     await d.markUsed(caller.id)
     return json({ ok: true, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
   }
