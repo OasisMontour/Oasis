@@ -8,8 +8,10 @@ cd "$(dirname "$0")/.."
 run() {
   psql "$1" -v ON_ERROR_STOP=1 -q -f supabase/tests/00_supabase_shim.sql
   for f in supabase/migrations/*.sql; do psql "$1" -v ON_ERROR_STOP=1 -q -f "$f"; done
-  psql "$1" -v ON_ERROR_STOP=1 -f supabase/tests/10_rls_test.sql 2>&1 | grep -E 'ok -|FAIL|ERROR|PASSED' 
-  return "${PIPESTATUS[0]}"
+  for f in supabase/tests/[1-9]*.sql; do
+    psql "$1" -v ON_ERROR_STOP=1 -f "$f" 2>&1 | grep -E 'ok -|FAIL|ERROR|PASSED'
+    [[ "${PIPESTATUS[0]}" == 0 ]] || return 1
+  done
 }
 
 if [[ -n "${DATABASE_URL:-}" ]]; then run "$DATABASE_URL"; exit; fi

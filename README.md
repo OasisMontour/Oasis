@@ -18,15 +18,16 @@ First-time project setup (Supabase, Google sign-in, teacher accounts): see [docs
 
 ```bash
 npm run test:db   # schema + RLS + RPC tests against a throwaway Postgres
+npm test          # unit tests (bulk paste parser, YouTube links)
 npm run lint
 npm run build
 ```
 
-CI runs all three on every PR. Nothing merges to `main` without a passing CI run and one review.
+CI runs all of these on every PR. Nothing merges to `main` without a passing CI run and one review.
 
 ## How the data is protected
 
-- RLS is on for every table. Students never write tables directly: they go through RPCs (`join_class`, `get_student_lesson`, `save_progress`, `submit_answer`, `finish_attempt`, `log_focus_event`).
+- RLS is on for every table. Students never write tables directly: they go through RPCs (`save_lesson` for teachers; `join_class`, `get_student_lesson`, `save_progress`, `submit_answer`, `finish_attempt`, `log_focus_event`).
 - Students can't read correct answers. The `questions` table is teacher-only; the player gets questions from `get_student_lesson`, which leaves answers out.
 - Scores are computed in the database. `save_progress` rejects skipping ahead: past an unanswered question, faster than real time, or past the end of the video.
 - Teachers are whoever is on `teacher_allowlist`. Everyone else who signs in is a student. Role can't be changed from the browser.
