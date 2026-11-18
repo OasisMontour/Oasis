@@ -23,7 +23,20 @@ One-time steps to get Oasis running against a real Supabase project. About 30 mi
 4. Supabase -> Authentication -> URL Configuration: Site URL = your Vercel URL; add `http://localhost:5173` to redirect URLs.
 5. **District IT (do this now, it's the biggest launch risk):** students under 18 can't sign into third-party apps the district hasn't approved. Send IT the OAuth client ID and ask them to mark Oasis as *Trusted* in Google Admin -> Security -> API controls -> App access control. Test with one real student account.
 
-Classroom scopes (roster import, posting assignments, grades) are added later and requested only from teachers. They need Google app verification, so submit for verification early.
+### Google Classroom (teachers only)
+
+1. Google Cloud Console -> APIs & Services -> Library: enable **Google Classroom API**.
+2. OAuth consent screen -> Scopes: add `classroom.courses.readonly`, `classroom.rosters.readonly`, `classroom.profile.emails`, `classroom.coursework.students`.
+3. Deploy the `classroom` Edge Function and give it its secrets (same Google client as step 2 above):
+   ```bash
+   supabase secrets set GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... \
+     TOKEN_ENCRYPTION_KEY=$(openssl rand -base64 32) APP_ORIGIN=https://your-vercel-url
+   supabase functions deploy classroom
+   ```
+   Back up `TOKEN_ENCRYPTION_KEY` somewhere safe (password manager). Lose it and every teacher has to reconnect; leak it together with a database dump and their Classroom access leaks.
+4. Students never see these scopes. A teacher clicks **Connect Google Classroom** once; after that the dashboard re-syncs rosters on its own whenever it's been more than 6 hours.
+
+These are sensitive scopes, so outside the district's trusted-app setting Google shows an "unverified app" warning until the app is verified. Submit for verification early, and ask district IT to trust the client ID (step 5 above covers both).
 
 ## 3. Teacher accounts
 

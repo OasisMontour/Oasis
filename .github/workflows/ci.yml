@@ -14,6 +14,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - run: deno check supabase/functions/*/index.ts
       - run: npm run build
         env:
           VITE_SUPABASE_URL: https://example.supabase.co

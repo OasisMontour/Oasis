@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
+import { useClassroomSync } from '../lib/useClassroomSync'
 
 type ClassRow = { id: string; name: string; join_code: string; google_course_id: string | null; enrollments: { count: number }[] }
 type LessonRow = {
@@ -42,6 +43,8 @@ export function TeacherHome() {
     load()
   }, [load])
 
+  const classroom = useClassroomSync(load)
+
   const addClass = async (e: FormEvent) => {
     e.preventDefault()
     const { error } = await supabase.from('classes').insert({ teacher_id: profile!.id, name: newClass.trim() })
@@ -74,8 +77,20 @@ export function TeacherHome() {
       </section>
 
       <section>
-        <h2>Classes</h2>
-        {loaded && classes.length === 0 && <p className="muted">No classes yet. Make one and give students its join code.</p>}
+        <div className="section-head">
+          <h2>Classes</h2>
+          <span className="row">
+            {classroom.connected === false && <button onClick={classroom.connect}>Connect Google Classroom</button>}
+            {classroom.connected && (
+              <>
+                <button onClick={classroom.syncNow} disabled={classroom.busy}>{classroom.busy ? 'Syncing…' : 'Sync Google Classroom'}</button>
+                <button className="small" onClick={classroom.disconnect} disabled={classroom.busy}>Disconnect</button>
+              </>
+            )}
+          </span>
+        </div>
+        {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
+        {loaded && classes.length === 0 && <p className="muted">No classes yet. Connect Google Classroom to import them, or make one and give students its join code.</p>}
         <ul className="cards">
           {classes.map((c) => (
             <li key={c.id} className="card row">
