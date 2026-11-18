@@ -99,3 +99,45 @@ export async function createCoursework(f: typeof fetch, token: string, courseId:
   if (!res.ok || !out.id) throw new Error(`Google Classroom couldn't post the assignment (${res.status}${out.error?.message ? `: ${out.error.message}` : ''})`)
   return out.id
 }
+
+type GStudentId = { userId: string; profile: { emailAddress?: string } }
+
+/** Map of lowercased student email -> Classroom userId for a course. */
+export async function listCourseStudentIds(f: typeof fetch, token: string, courseId: string): Promise<Map<string, string>> {
+  const students = await getAll<GStudentId>(f, token, `/courses/${encodeURIComponent(courseId)}/students`, 'students')
+  const out = new Map<string, string>()
+  for (const s of students) if (s.profile?.emailAddress && s.userId) out.set(s.profile.emailAddress.toLowerCase(), s.userId)
+  return out
+}
+
+/** Every student submission for a piece of coursework. */
+export async function listSubmissions(f: typeof fetch, token: string, courseId: string, courseworkId: string): Promise<{ id: string; userId: string }[]> {
+  const subs = await getAll<{ id: string; userId: string }>(
+    f,
+    token,
+    `/courses/${encodeURIComponent(courseId)}/courseWork/${encodeURIComponent(courseworkId)}/studentSubmissions`,
+    'studentSubmissions',
+  )
+  return subs.map((s) => ({ id: s.id, userId: s.userId }))
+}
+
+/** Sets both the draft and assigned grade. Students only see it once the teacher presses Return in Classroom. */
+export async function setSubmissionGrade(
+  f: typeof fetch,
+  token: string,
+  courseId: string,
+  courseworkId: string,
+  submissionId: string,
+  grade: number,
+): Promise<void> {
+  const url = `${API}/courses/${encodeURIComponent(courseId)}/courseWork/${encodeURIComponent(courseworkId)}/studentSubmissions/${encodeURIComponent(submissionId)}?updateMask=assignedGrade,draftGrade`
+  const res = await f(url, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assignedGrade: grade, draftGrade: grade }),
+  })
+  if (!res.ok) {
+    const out = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
+    throw new Error(`Google Classroom refused the grade (${res.status}${out.error?.message ? `: ${out.error.message}` : ''})`)
+  }
+}

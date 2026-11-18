@@ -4,16 +4,30 @@
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
 // POST { action: 'post', assignment_id }    -> posts an Oasis assignment to its Classroom course (idempotent)
+// POST { action: 'push_grades', assignment_id } -> writes finished students' scores to Classroom as draft + assigned grades
+//                                               (teachers still press Return in Classroom for students to see them)
 //
 // Business errors come back as 200 { ok: false, error } so the browser can show a message.
 
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
-import { createCoursework, fetchClassroomRosters, InvalidGrantError, refreshAccessToken, revokeToken, type ImportCourse } from './google.ts'
+import {
+  createCoursework,
+  fetchClassroomRosters,
+  InvalidGrantError,
+  listCourseStudentIds,
+  listSubmissions,
+  refreshAccessToken,
+  revokeToken,
+  setSubmissionGrade,
+  type ImportCourse,
+} from './google.ts'
 
 export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[] }
 
 export type AssignmentToPost = { id: string; lessonTitle: string; courseId: string; dueAt: string | null; courseworkId: string | null }
+
+export type GradesToPush = { courseId: string; courseworkId: string | null; grades: { email: string; score: number }[] }
 
 export type Deps = {
   fetch: typeof fetch
@@ -28,6 +42,8 @@ export type Deps = {
   importClassroom(authHeader: string, courses: ImportCourse[]): Promise<SyncResult>
   /** Read as the caller, so RLS guarantees it's their own assignment. null if not found/not theirs. */
   getAssignment(authHeader: string, assignmentId: string): Promise<AssignmentToPost | null>
+  /** Read as the caller. null if not found/not theirs. Only finished attempts with a score. */
+  getGradesToPush(authHeader: string, assignmentId: string): Promise<GradesToPush | null>
   /** Written as the caller. */
   setCourseworkId(authHeader: string, assignmentId: string, courseworkId: string): Promise<void>
 }
@@ -114,6 +130,44 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       await d.setCourseworkId(auth, asg.id, cwid)
       await d.markUsed(caller.id)
       return json({ ok: true, coursework_id: cwid })
+    }
+
+    if (body.action === 'push_grades') {
+      const id = body.assignment_id
+      if (!id || typeof id !== 'string') return json({ ok: false, error: 'missing assignment_id' }, 400)
+      const g = await d.getGradesToPush(auth, id)
+      if (!g) return json({ ok: false, error: 'not your assignment' }, 404)
+      if (!g.courseworkId) return json({ ok: false, error: 'not_posted' })
+      const courseworkId = g.courseworkId
+      const a = await storedAccess()
+      if ('res' in a) return a.res
+      const userIds = await listCourseStudentIds(d.fetch, a.token, g.courseId)
+      const subByUser = new Map((await listSubmissions(d.fetch, a.token, g.courseId, courseworkId)).map((s) => [s.userId, s.id]))
+      const notInClassroom: string[] = []
+      const failed: { email: string; error: string }[] = []
+      const todo: { email: string; submissionId: string; grade: number }[] = []
+      for (const { email, score } of g.grades) {
+        const userId = userIds.get(email.toLowerCase())
+        const submissionId = userId ? subByUser.get(userId) : undefined
+        if (!submissionId) notInClassroom.push(email)
+        else todo.push({ email, submissionId, grade: Math.round(score * 10) / 10 })
+      }
+      let pushed = 0
+      let next = 0
+      const worker = async () => {
+        while (next < todo.length) {
+          const t = todo[next++]
+          try {
+            await setSubmissionGrade(d.fetch, a.token, g.courseId, courseworkId, t.submissionId, t.grade)
+            pushed++
+          } catch (e) {
+            failed.push({ email: t.email, error: (e as Error).message })
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(5, todo.length) }, worker))
+      await d.markUsed(caller.id)
+      return json({ ok: true, pushed, not_in_classroom: notInClassroom, failed })
     }
 
     if (body.action === 'disconnect') {

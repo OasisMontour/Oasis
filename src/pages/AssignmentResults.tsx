@@ -30,6 +30,8 @@ export function AssignmentResults() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'name', dir: 'asc' })
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [onlyToGrade, setOnlyToGrade] = useState(false)
@@ -116,6 +118,32 @@ export function AssignmentResults() {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  const sendGrades = async () => {
+    if (!id || sending) return
+    setSending(true)
+    setNotice(null)
+    setInfo(null)
+    const { data: res, error: err } = await supabase.functions.invoke<
+      | { ok: true; pushed: number; not_in_classroom: string[]; failed: { email: string; error: string }[] }
+      | { ok: false; error: string }
+    >('classroom', { body: { action: 'push_grades', assignment_id: id } })
+    setSending(false)
+    if (err || !res) return setNotice(`Couldn't send grades to Google Classroom. ${err?.message ?? ''}`.trim())
+    if (!res.ok) {
+      if (res.error === 'reconnect' || res.error === 'not_connected')
+        return setNotice('Google Classroom needs to be reconnected. Click Connect Google Classroom on your dashboard, then try again.')
+      if (res.error === 'not_posted') return setNotice("This assignment hasn't been posted to Google Classroom yet.")
+      return setNotice(`Couldn't send grades to Google Classroom: ${res.error}`)
+    }
+    let text = `Sent ${res.pushed} grade${res.pushed === 1 ? '' : 's'} to Google Classroom.`
+    const m = res.not_in_classroom.length
+    if (m) text += ` ${m} student${m === 1 ? " isn't" : "s aren't"} in the Classroom course.`
+    const f = res.failed.length
+    if (f) text += ` ${f} failed: ${res.failed.map((x) => x.email).join(', ')}.`
+    text += ' Press Return in Classroom for students to see their grades.'
+    setInfo(text)
+  }
+
   if (loading && !data) return <main className="page results"><BackLink /><p className="muted" role="status">Loading results…</p></main>
   if (!data || !summary || !stats) {
     return (
@@ -147,8 +175,14 @@ export function AssignmentResults() {
             {assignment.class_name} · {due ? `Due ${due}` : 'No due date'} · {questions.length} question{questions.length === 1 ? '' : 's'}
           </p>
         </div>
-        <button onClick={exportCsv} disabled={students.length === 0}>Export CSV</button>
+        <div className="row">
+          {assignment.google_coursework_id && students.some((s) => s.status === 'finished') && (
+            <button onClick={sendGrades} disabled={sending}>{sending ? 'Sending…' : 'Send grades to Classroom'}</button>
+          )}
+          <button onClick={exportCsv} disabled={students.length === 0}>Export CSV</button>
+        </div>
       </div>
+      {info && <p className="muted" role="status">{info}</p>}
       {notice && <p className="error" role="alert">{notice}</p>}
 
       <ul className="stats" aria-label="Summary">
