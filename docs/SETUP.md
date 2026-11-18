@@ -23,7 +23,13 @@ One-time steps to get Oasis running against a real Supabase project. About 30 mi
 4. Supabase -> Authentication -> URL Configuration: Site URL = your Vercel URL; add `http://localhost:5173` to redirect URLs.
 5. **District IT (do this now, it's the biggest launch risk):** students under 18 can't sign into third-party apps the district hasn't approved. Send IT the OAuth client ID and ask them to mark Oasis as *Trusted* in Google Admin -> Security -> API controls -> App access control. Test with one real student account.
 
-Classroom scopes (roster import, posting assignments, grades) are added later and requested only from teachers. They need Google app verification, so submit for verification early.
+### Google Classroom (teachers only)
+
+1. Google Cloud Console -> APIs & Services -> Library: enable **Google Classroom API**.
+2. OAuth consent screen -> Scopes: add `classroom.courses.readonly`, `classroom.rosters.readonly`, `classroom.profile.emails`.
+3. Nothing to change in Supabase. Students never see these scopes; only a teacher clicking **Import from Google Classroom** does.
+
+These are sensitive scopes, so outside the district's trusted-app setting Google shows an "unverified app" warning until the app is verified. Submit for verification early, and ask district IT to trust the client ID (step 5 above covers both).
 
 ## 3. Teacher accounts
 
