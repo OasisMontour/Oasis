@@ -2,11 +2,11 @@
 // Secrets (supabase secrets set ...): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY.
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { handleClassroom, type SyncResult } from '../_shared/classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type SyncResult } from '../_shared/classroomHandler.ts'
 
 const url = Deno.env.get('SUPABASE_URL')!
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!
-// Service role is used ONLY for the google_tokens table and import_classroom_for (rosters must come from
+// Service role is used ONLY for the google_tokens table, claim_teacher_for and import_classroom_for (rosters must come from
 // Google, so browsers can't call it). Everything else runs as the caller.
 const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
 const asCaller = (authHeader: string) =>
@@ -38,7 +38,11 @@ Deno.serve(async (req) => {
       const { data } = await c.auth.getUser()
       if (!data.user) return null
       const { data: isTeacher } = await c.rpc('is_teacher')
-      return { id: data.user.id, isTeacher: isTeacher === true }
+      return { id: data.user.id, email: (data.user.email ?? '').toLowerCase(), isTeacher: isTeacher === true }
+    },
+    async claimTeacher(userId, evidence) {
+      // Service role: the role grant is only callable from here, with evidence fetched from Google just now.
+      return must(await admin.rpc('claim_teacher_for', { p_user: userId, p_ev: evidence })) as ClaimResult
     },
     async loadToken(userId) {
       const row = must(await admin.from('google_tokens').select('refresh_token_enc').eq('user_id', userId).maybeSingle())

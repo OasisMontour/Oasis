@@ -34,6 +34,7 @@ textarea { width: 100%; resize: vertical; }
 input.time { width: 6.5em; }
 .grow { flex: 1; min-width: 12em; }
 button.small { padding: 4px 10px; font-size: .875rem; }
+button.link { padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; }
 button.danger { color: var(--danger); }
 .video { aspect-ratio: 16 / 9; width: 100%; background: #000; border-radius: 10px; overflow: hidden; }
 .video iframe, .video > div { width: 100%; height: 100%; }
@@ -59,6 +60,8 @@ button.student { display: flex; gap: 6px; } button.student .email { display: blo
 .mini-bar > span, .meter > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .tag { font-size: .8rem; padding: 1px 8px; border-radius: 999px; border: 1px solid #cfd8d5; }
 .tag.warn, .tag.grade { background: #fff4e0; border-color: #e8b860; }
+.tag.ai { background: #eef0ff; border-color: #a9b2f0; }
+.ai-note { margin: 4px 0; color: #3d4560; }
 .results-table tr.gone .name { color: var(--muted); }
 .answers, .qstats { padding-left: 0; list-style: none; display: grid; gap: 8px; }
 blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); border-left: 3px solid #cfd8d5; white-space: pre-wrap; }
@@ -73,6 +76,8 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .admin .stats { margin-top: 20px; }
 .table-wrap { overflow-x: auto; }
 .admin .results-table td { white-space: nowrap; }
+.admin .results-table td.wrap { white-space: normal; min-width: 14em; }
+.signup .card p { margin: 0; }
 .dau { margin: 16px 0 0; background: var(--surface); border: 1px solid #dde4e2; border-radius: 10px; padding: 12px 14px; }
 .dau figcaption { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin-top: 52px; border-bottom: 1px solid #dde4e2; }
@@ -97,3 +102,20 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 /* admin tables: the second column (status notes, emails) wraps so it can't push the counts off screen */
 .admin .results-table td:nth-child(2) { white-space: normal; min-width: 10em; max-width: 13em; }
 .admin .results-table .tag { white-space: nowrap; }
+
+/* legal pages + site footer */
+.legal { max-width: 760px; margin: 0 auto; padding: 16px 16px 40px; line-height: 1.55; }
+.legal .bar a { text-decoration: none; }
+.legal-draft { background: #fff4e0; border: 1px solid #e8b860; border-radius: 8px; padding: 8px 12px; }
+.legal-doc h1 { font-size: 1.9rem; line-height: 1.2; margin: 16px 0 8px; }
+.legal-doc h2 { font-size: 1.25rem; margin: 28px 0 6px; }
+.legal-doc table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: .925rem; margin: 8px 0; }
+.legal-doc th, .legal-doc td { text-align: left; vertical-align: top; padding: 6px 8px; border: 1px solid #dde4e2; }
+.legal-doc blockquote { margin: 12px 0; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--accent); }
+.legal-doc mark.placeholder { background: #ffe7a3; padding: 0 3px; border-radius: 3px; }
+.legal-doc li { margin: 4px 0; }
+.legal-doc { overflow-wrap: break-word; }
+.legal-footer { padding: 24px 16px; text-align: center; font-size: .875rem; }
+.legal-footer nav { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.legal-footer a { color: var(--muted); }
+@media print { .legal-footer, .legal .bar { display: none; } }
