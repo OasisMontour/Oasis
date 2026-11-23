@@ -15,7 +15,7 @@ type LessonRow = {
 }
 
 export function TeacherHome() {
-  const { profile, signOut } = useAuth()
+  const { profile, isAdmin, signOut } = useAuth()
   const [classes, setClasses] = useState<ClassRow[]>([])
   const [lessons, setLessons] = useState<LessonRow[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -52,6 +52,8 @@ export function TeacherHome() {
       <header className="bar">
         <strong>Oasis</strong>
         <span className="muted">{profile?.email}</span>
+        <Link to="/report?from=%2Fteacher">Report a bug</Link>
+        {isAdmin && <Link className="button" to="/admin">Admin</Link>}
         <button onClick={signOut}>Sign out</button>
       </header>
       <h1>Welcome, {profile?.name || 'teacher'}</h1>

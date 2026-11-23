@@ -5,6 +5,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Supabase records migrations by their timestamp prefix, so two files with the same prefix means one of
+# them is silently skipped by `supabase db push`. Parallel branches make this easy to do by accident.
+dupes="$(ls supabase/migrations | cut -d_ -f1 | sort | uniq -d)"
+if [[ -n "$dupes" ]]; then echo "FAIL: duplicate migration timestamps: $dupes" >&2; exit 1; fi
+
 run() {
   psql "$1" -v ON_ERROR_STOP=1 -q -f supabase/tests/00_supabase_shim.sql
   for f in supabase/migrations/*.sql; do psql "$1" -v ON_ERROR_STOP=1 -q -f "$f"; done
