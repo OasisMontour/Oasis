@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { rememberNext, takeNext } from '../lib/next'
 
@@ -44,6 +44,10 @@ export function SignIn() {
         <button className="link" disabled={loading} onClick={() => connectClassroom('/teacher/signup').catch((e: Error) => setError(e.message))}>
           Sign up with Google Classroom
         </button>
+      </p>
+      <p className="muted small">
+        By signing in you agree to the <Link to="/terms">Terms of Use</Link> and <Link to="/privacy">Privacy Policy</Link>.
+        Students: <Link to="/student-privacy">how Oasis uses your information</Link>.
       </p>
     </main>
   )
