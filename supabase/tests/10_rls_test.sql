@@ -137,8 +137,8 @@ set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');
 select save_progress(:'att1', 150, 150);
 select tests.ok((select max_watched_s from attempts where id = :'att1') = 100, 'progress is capped at the video length');
-select finish_attempt(:'att1');
 select log_focus_event(:'att1', 'tab_hidden', 42);
+select finish_attempt(:'att1');
 commit;
 select tests.ok((select score from attempts where id = :'att1') = 50, 'score counts ungraded short answer as not yet correct');
 
