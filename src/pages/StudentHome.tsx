@@ -68,6 +68,9 @@ export function StudentHome() {
             <button className="s-btn primary" onClick={signOut}>
               Sign out
             </button>
+            <p className="s-muted">
+              Teacher? <Link to="/teacher/signup">Set up a teacher account with Google Classroom</Link>.
+            </p>
           </div>
         )}
 

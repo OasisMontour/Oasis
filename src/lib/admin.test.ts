@@ -1,18 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { looksLikeEmail, teacherStatus, type AdminTeacher } from './admin'
+import { looksLikeDomain, looksLikeEmail, signupReason, teacherStatus, type AdminSignup, type AdminTeacher } from './admin'
 
 const base: AdminTeacher = {
-  email: 't@district.org', name: 'T', on_allowlist: true, added_at: null, added_by: null, role: 'teacher',
+  email: 't@district.org', name: 'T', on_allowlist: true, via: 'allowlist', added_at: null, added_by: null, role: 'teacher',
   classroom_connected: true, last_synced_at: null, classes: 2, students: 40, lessons: 3, assignments: 1,
 }
 
 describe('teacherStatus', () => {
-  it('invited but not signed in', () => expect(teacherStatus({ ...base, role: null })).toEqual({ label: 'Invited, not signed in yet', warn: false }))
+  it('pre-approved but not signed in', () => expect(teacherStatus({ ...base, role: null })).toEqual({ label: 'Pre-approved, not signed in yet', warn: false }))
   it('signed in as student is a warning', () => expect(teacherStatus({ ...base, role: 'student' }).warn).toBe(true))
-  it('teacher off the allowlist is a warning', () => expect(teacherStatus({ ...base, on_allowlist: false }).label).toMatch(/not on allowlist/))
+  it('self-signed-up teachers off the allowlist are normal now', () =>
+    expect(teacherStatus({ ...base, on_allowlist: false, via: 'domain' })).toEqual({ label: 'Active', warn: false }))
   it('no Classroom', () => expect(teacherStatus({ ...base, classroom_connected: false }).label).toBe('Classroom not connected'))
   it('no classes', () => expect(teacherStatus({ ...base, classes: 0 }).label).toBe('No classes synced'))
   it('active', () => expect(teacherStatus(base)).toEqual({ label: 'Active', warn: false }))
+})
+
+describe('sign-ups', () => {
+  const s: AdminSignup = {
+    user_id: 'u', email: 'x@gmail.com', name: 'X', reason: 'not_verified', requested_at: '',
+    evidence: { hosted_domain: 'district.org', verified_teacher: false, active_courses: 2, students: 30, course_names: [] },
+  }
+  it('explains the reason', () => {
+    expect(signupReason(s)).toContain('district.org')
+    expect(signupReason({ ...s, reason: 'personal_account' })).toMatch(/Personal/)
+  })
+  it('domain check matches the server', () => {
+    expect(looksLikeDomain(' @District.k12.pa.us')).toBe(true)
+    expect(looksLikeDomain('district')).toBe(false)
+    expect(looksLikeDomain('a b.org')).toBe(false)
+  })
 })
 
 describe('looksLikeEmail', () => {
