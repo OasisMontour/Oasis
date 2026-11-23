@@ -48,15 +48,16 @@ insert into enrollments (class_id, student_id) values
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000b2');
 
 -- ---------- teacher 1 builds a lesson and assigns it
-begin;
-set local role authenticated;
-select tests.become('00000000-0000-0000-0000-0000000000a1');
+-- (lessons and questions are written through save_lesson in the app; fixtures insert them directly)
 insert into lessons (id, teacher_id, title, subject, youtube_id, duration_s)
-  values ('20000000-0000-0000-0000-000000000001', auth.uid(), 'Supply and demand', 'Business', 'dQw4w9WgXcQ', 100);
+  values ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a1', 'Supply and demand', 'Business', 'dQw4w9WgXcQ', 100);
 insert into questions (id, lesson_id, at_s, kind, prompt, choices, correct_index) values
   ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 10, 'mc', 'What is supply?', '["A","B","C"]', 1);
 insert into questions (id, lesson_id, at_s, kind, prompt) values
   ('30000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000001', 50, 'short', 'Explain demand.');
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000a1');
 insert into assignments (id, lesson_id, class_id)
   values ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001');
 select tests.ok(tests.throws($$insert into classes (teacher_id, name, google_course_id) values (auth.uid(), 'manual', 'x')$$), 'teacher cannot create a class by hand');
@@ -180,7 +181,7 @@ begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000a2');
 select tests.ok((select count(*) from lessons) = 1 and (select count(*) from questions) = 2, 'shared lesson + questions show in library for other teachers');
-update lessons set title = 'hijacked' where id = '20000000-0000-0000-0000-000000000001';
+select tests.throws($$update lessons set title = 'hijacked' where id = '20000000-0000-0000-0000-000000000001'$$);
 select tests.ok(tests.throws($$insert into assignments (lesson_id, class_id) values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001')$$), 'other teacher cannot assign into teacher 1''s class');
 select tests.become('00000000-0000-0000-0000-0000000000b3');
 select tests.ok((select count(*) from lessons) = 0, 'students cannot browse the shared library');

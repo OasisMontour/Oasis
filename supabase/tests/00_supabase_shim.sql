@@ -10,7 +10,8 @@ create schema if not exists auth;
 create table if not exists auth.users (
   id uuid primary key,
   email text,
-  raw_user_meta_data jsonb not null default '{}'
+  raw_user_meta_data jsonb not null default '{}',
+  raw_app_meta_data jsonb not null default '{}'   -- Supabase writes {"provider": "google", ...} here
 );
 create or replace function auth.uid() returns uuid language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
