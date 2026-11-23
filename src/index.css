@@ -85,3 +85,11 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .bar-col:first-child .tip { left: 0; transform: none; } .bar-col:last-child .tip { left: auto; right: 0; transform: none; }
 .bars-axis { display: flex; justify-content: space-between; margin-top: 4px; }
 .dau table { margin-top: 10px; }
+
+/* bug reports */
+.page.narrow { max-width: 680px; }
+.tag.sev.high { background: #fde8e6; border-color: #e8a29b; color: var(--danger); }
+.tag.sev.medium { background: #fff4e0; border-color: #e8b860; }
+.tag.ok-tag { background: #e6f4ea; border-color: #9fd3ae; color: var(--ok); }
+.card.bug.sev-high { border-left: 4px solid var(--danger); }
+.bug-text { white-space: pre-wrap; overflow-wrap: anywhere; }

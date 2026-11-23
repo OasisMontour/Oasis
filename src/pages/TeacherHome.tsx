@@ -52,6 +52,7 @@ export function TeacherHome() {
       <header className="bar">
         <strong>Oasis</strong>
         <span className="muted">{profile?.email}</span>
+        <Link to="/report?from=%2Fteacher">Report a bug</Link>
         {isAdmin && <Link className="button" to="/admin">Admin</Link>}
         <button onClick={signOut}>Sign out</button>
       </header>

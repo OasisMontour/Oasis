@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import { looksLikeEmail, teacherStatus, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
 import { formatDuration } from '../lib/duration'
+import { AdminBugs } from './AdminBugs'
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–')
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
@@ -29,17 +30,24 @@ export function AdminHome() {
   }, [load])
 
   const t = data?.totals
+  const reportError = useCallback((msg: string) => {
+    setNotice(null)
+    setError(msg)
+  }, [])
 
   return (
     <main className="page admin">
       <header className="bar">
         <strong>Oasis admin</strong>
         <span className="muted">{profile?.email}</span>
+        <Link to="/changelog">Changelog</Link>
         <Link className="button" to={profile?.role === 'teacher' ? '/teacher' : '/student'}>Back to app</Link>
         <button onClick={signOut}>Sign out</button>
       </header>
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="ok" role="status">{notice}</p>}
+
+      <AdminBugs onError={reportError} />
 
       {usage && <Usage usage={usage} />}
 

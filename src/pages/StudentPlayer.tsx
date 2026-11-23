@@ -574,6 +574,9 @@ export function StudentPlayer() {
           </span>
         )}
         {shaky && phase === 'playing' && !reconnecting && <span className="p-chip">Saving… check Wi-Fi</span>}
+        <Link to={`/report?from=${encodeURIComponent(location.pathname)}`} className="p-back small-link">
+          Report a problem
+        </Link>
       </header>
 
       <div className={`p-body${question ? ' with-panel' : ''}`}>

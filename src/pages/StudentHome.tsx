@@ -32,6 +32,9 @@ export function StudentHome() {
       <header className="s-top">
         <strong>Oasis</strong>
         <span className="s-muted">{profile?.email}</span>
+        <Link className="s-btn ghost" to="/report?from=%2Fstudent">
+          Report a bug
+        </Link>
         {isAdmin && (
           <Link className="s-btn ghost" to="/admin">
             Admin
