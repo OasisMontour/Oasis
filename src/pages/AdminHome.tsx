@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
-import { looksLikeEmail, teacherStatus, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
+import { looksLikeEmail, teacherStatus, VIA_LABEL, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
 import { formatDuration } from '../lib/duration'
 import { AdminBugs } from './AdminBugs'
+import { AdminSignups } from './AdminSignups'
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–')
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
 
-// Admin page for the Oasis team. Read-only overview plus the teacher allowlist.
+// Admin page for the Oasis team. Overview, teacher sign-ups, and teacher access (approve, pre-approve, remove).
 // Students are minors: the server only ever sends counts for them, never names or emails.
 export function AdminHome() {
   const { profile, signOut } = useAuth()
@@ -61,6 +62,18 @@ export function AdminHome() {
           <Stat label="Attempts finished" value={t.attempts_finished} of={t.attempts_started} />
           <Stat label="Flagged attempts" value={t.flagged_attempts} />
         </ul>
+      )}
+
+      {data && (
+        <AdminSignups
+          data={data}
+          onChange={async (msg) => {
+            setError(null)
+            setNotice(msg)
+            await load()
+          }}
+          onError={reportError}
+        />
       )}
 
       <Teachers
@@ -262,7 +275,7 @@ function Teachers({
         ? `${r.email} was already on the list.`
         : r.promoted
           ? `${r.email} added. They'd already signed in, so their account is now a teacher account.`
-          : `${r.email} added. They'll be a teacher the first time they sign in with Google.`,
+          : `${r.email} pre-approved. They'll be a teacher the first time they sign in with Google.`,
     )
   }
 
@@ -275,8 +288,8 @@ function Teachers({
     const r = data as { email: string; demoted: boolean }
     await onChange(
       r.demoted
-        ? `${r.email} removed and is no longer a teacher. Their classes, lessons and results are kept.`
-        : `${r.email} removed from the allowlist.`,
+        ? `${r.email} removed and blocked from signing up again. Their classes, lessons and results are kept.`
+        : `${r.email} removed from pre-approved and blocked.`,
     )
   }
 
@@ -285,7 +298,7 @@ function Teachers({
       <div className="section-head">
         <h2>Teachers</h2>
         <form className="row" onSubmit={add}>
-          <label className="sr-only" htmlFor="new-teacher">Teacher's school Google email</label>
+          <label className="sr-only" htmlFor="new-teacher">Pre-approve a teacher's Google email (optional)</label>
           <input
             id="new-teacher"
             className="text"
@@ -295,10 +308,10 @@ function Teachers({
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <button className="primary" disabled={busy}>Add teacher</button>
+          <button className="primary" disabled={busy} title="Optional. Makes them a teacher at sign-in without the Classroom check.">Pre-approve</button>
         </form>
       </div>
-      {teachers && teachers.length === 0 && <p className="muted">Nobody on the allowlist yet.</p>}
+      {teachers && teachers.length === 0 && <p className="muted">No teachers yet.</p>}
       {teachers && teachers.length > 0 && (
         <div className="table-wrap">
           <table className="results-table">
@@ -328,7 +341,7 @@ function Teachers({
                     </td>
                     <td>
                       <span className={s.warn ? 'tag warn' : 'tag'}>{s.label}</span>
-                      {t.added_by && <div className="muted small">added by {t.added_by}</div>}
+                      {t.via && <div className="muted small">{VIA_LABEL[t.via]}{t.added_by ? ` (${t.added_by})` : ''}</div>}
                     </td>
                     <td>{when(u?.last_seen ?? null)}</td>
                     <td>{u ? formatDuration(u.active_s_7d) : '–'}</td>
@@ -357,8 +370,8 @@ function Teachers({
         </div>
       )}
       <p className="muted small">
-        Removing a teacher takes them off the allowlist and turns their account back into a student account. Their classes, lessons and
-        student results stay.
+        Teachers sign themselves up with Google Classroom; pre-approving is only for someone who can't. Removing a teacher turns their
+        account back into a student account and blocks them from signing up again. Their classes, lessons and student results stay.
       </p>
     </section>
   )

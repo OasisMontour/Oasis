@@ -23,6 +23,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<SignIn />} />
+          {/* Any signed-in account; the server decides whether it becomes a teacher. */}
+          <Route path="/teacher/signup" element={<RequireSignedIn><TeacherSignup /></RequireSignedIn>} />
           <Route path="/teacher" element={<RequireRole role="teacher"><TeacherHome /></RequireRole>} />
           <Route path="/teacher/lessons/new" element={<RequireRole role="teacher"><LessonBuilder /></RequireRole>} />
           <Route path="/teacher/lessons/:id" element={<RequireRole role="teacher"><LessonBuilder /></RequireRole>} />

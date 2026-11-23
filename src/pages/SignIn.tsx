@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { rememberNext, takeNext } from '../lib/next'
 
 export function SignIn() {
-  const { loading, session, profile, signInWithGoogle } = useAuth()
+  const { loading, session, profile, signInWithGoogle, connectClassroom } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const from = (useLocation().state as { from?: string } | null)?.from
