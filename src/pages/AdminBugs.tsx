@@ -10,6 +10,7 @@ const STATUSES: BugStatus[] = ['open', 'fixing', 'fixed', 'wont_fix']
 export function AdminBugs({ onError }: { onError: (msg: string) => void }) {
   const [bugs, setBugs] = useState<AdminBug[] | null>(null)
   const [showClosed, setShowClosed] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const load = useCallback(async () => {
     const { data, error } = await supabase.rpc('admin_bug_reports')
     if (error) onError(`Couldn't load bug reports: ${error.message}`)
@@ -29,11 +30,20 @@ export function AdminBugs({ onError }: { onError: (msg: string) => void }) {
         <h2>
           Bug reports {open.length > 0 && <span className="tag warn">{open.length} open{highOpen ? `, ${highOpen} high` : ''}</span>}
         </h2>
-        {closed.length > 0 && <button className="small" onClick={() => setShowClosed((v) => !v)}>{showClosed ? 'Hide' : 'Show'} {closed.length} closed</button>}
+        <span className="row">
+          {open.length > 0 && (
+            <button className="small" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+              {expanded ? 'Hide' : `Show ${open.length} open`}
+            </button>
+          )}
+          {closed.length > 0 && (
+            <button className="small" onClick={() => setShowClosed((v) => !v)}>{showClosed ? 'Hide' : 'Show'} {closed.length} closed</button>
+          )}
+        </span>
       </div>
       {bugs && open.length === 0 && <p className="muted">No open reports.</p>}
       <ul className="cards">
-        {[...open, ...(showClosed ? closed : [])].map((b) => (
+        {[...(expanded ? open : []), ...(showClosed ? closed : [])].map((b) => (
           <BugCard key={b.id} bug={b} onSaved={load} onError={onError} />
         ))}
       </ul>

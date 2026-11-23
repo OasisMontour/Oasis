@@ -99,6 +99,10 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .card.bug.sev-high { border-left: 4px solid var(--danger); }
 .bug-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* admin tables: the second column (status notes, emails) wraps so it can't push the counts off screen */
+.admin .results-table td:nth-child(2) { white-space: normal; min-width: 10em; max-width: 13em; }
+.admin .results-table .tag { white-space: nowrap; }
+
 /* legal pages + site footer */
 .legal { max-width: 760px; margin: 0 auto; padding: 16px 16px 40px; line-height: 1.55; }
 .legal .bar a { text-decoration: none; }
