@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/bulkPaste'
+import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
 import { formatTime, parseTime } from '../lib/time'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
@@ -14,6 +15,7 @@ export function LessonBuilder() {
   const { id } = useParams()
   const navigate = useNavigate()
   const isNew = !id
+  const [searchParams] = useSearchParams()
 
   const [videoInput, setVideoInput] = useState('')
   const [youtubeId, setYoutubeId] = useState<string | null>(null)
@@ -24,7 +26,8 @@ export function LessonBuilder() {
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
-  const [usedBulk, setUsedBulk] = useState(false)
+  // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
+  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -112,6 +115,8 @@ export function LessonBuilder() {
   const loadVideo = () => {
     if (!videoInput.trim()) return // blurring an empty field isn't an error
     const vid = parseYouTubeId(videoInput)
+    if (!vid && /edpuzzle\.com/i.test(videoInput))
+      return setVideoError("That's an Edpuzzle link. Oasis plays the video from YouTube: open the video on YouTube and paste that link.")
     if (!vid) return setVideoError("That doesn't look like a YouTube link.")
     if (vid === youtubeId) return
     setVideoError(null)
@@ -150,7 +155,29 @@ export function LessonBuilder() {
     if (r.errors.length) return
     setQuestions((qs) => [...qs, ...r.questions.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
     setBulkText('')
-    setUsedBulk(true)
+    setSource((s) => (s === 'edpuzzle' ? s : 'bulk_paste'))
+    touch()
+  }
+
+  // ---- Edpuzzle import: the teacher copies their own lesson's questions and pastes them here.
+  // Nothing is fetched from Edpuzzle. Imported questions are plain drafts and save through
+  // save_lesson like any other, so they get the same ownership checks and question locking.
+  const [importText, setImportText] = useState('')
+  const [importNote, setImportNote] = useState<{ added: number; needAnswer: number; warnings: string[] } | null>(null)
+  const addImport = () => {
+    const r = parseEdpuzzlePaste(importText)
+    const needAnswer = r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length
+    setImportNote({ added: r.questions.length, needAnswer, warnings: r.warnings })
+    if (r.youtubeId && !youtubeId) {
+      setVideoInput(`https://youtu.be/${r.youtubeId}`)
+      setVideoError(null)
+      setDuration(null)
+      setYoutubeId(r.youtubeId)
+    }
+    if (!r.questions.length) return
+    setQuestions((qs) => [...qs, ...r.questions.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
+    setImportText('')
+    setSource('edpuzzle')
     touch()
   }
 
@@ -184,7 +211,7 @@ export function LessonBuilder() {
         duration_s: duration,
         require_fullscreen: fullscreen,
         ai_grade_short: aiGrade,
-        source: usedBulk ? 'bulk_paste' : 'manual',
+        source,
       },
       p_questions: [...questions]
         .sort((a, b) => a.at_s - b.at_s)
@@ -214,6 +241,35 @@ export function LessonBuilder() {
     setStatus({ kind: 'ok', text: 'Saved.' })
   }
 
+  // Shown first when the teacher came here to import, otherwise tucked under the questions.
+  const fromEdpuzzle = searchParams.get('from') === 'edpuzzle'
+  const importPanel = (
+    <details className="card" open={fromEdpuzzle || undefined}>
+      <summary>Bring over an Edpuzzle lesson</summary>
+      <ol className="muted small">
+        <li>Open the lesson in Edpuzzle and click into the video's questions.</li>
+        <li>Select the questions (or the whole page) and copy.</li>
+        <li>Paste below. Times, questions and choices come over; anything else is ignored.</li>
+      </ol>
+      <p className="muted small">
+        Edpuzzle doesn't copy which answer is right unless you add a * or ✓ next to it, so you'll pick those here. Video
+        crops, notes, voiceovers and uploaded (non-YouTube) videos don't come over.
+      </p>
+      <textarea aria-label="Edpuzzle questions" rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={EDPUZZLE_IMPORT_EXAMPLE} />
+      <button onClick={addImport} disabled={!importText.trim()}>Import questions</button>
+      {importNote && (
+        <div role="status" className="stack small">
+          <p className={importNote.added ? 'ok' : 'error'}>
+            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : 'No questions found.'}
+            {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
+            {importNote.added > 0 && !youtubeId && ' Now paste the YouTube link at the top.'}
+          </p>
+          {importNote.warnings.length > 0 && <ul className="muted">{importNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+        </div>
+      )}
+    </details>
+  )
+
   if (loading) return <p className="muted center">Loading…</p>
 
   return (
@@ -232,6 +288,8 @@ export function LessonBuilder() {
         <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
       </header>
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
+
+      {fromEdpuzzle && <section>{importPanel}</section>}
 
       <section className="stack">
         <label>
@@ -325,12 +383,14 @@ export function LessonBuilder() {
                     </div>
                   ))}
                   {q.choices.length < 6 && <button className="small" onClick={() => update(q.key, { choices: [...q.choices, ''] })}>+ Add choice</button>}
-                  <p className="muted small">Pick the right answer with the circle.</p>
+                  <p className={q.correct_index === null ? 'error small' : 'muted small'}>Pick the right answer with the circle.</p>
                 </div>
               )}
             </li>
           ))}
         </ol>
+
+        {!fromEdpuzzle && importPanel}
 
         <details className="card">
           <summary>Paste a bunch of questions at once</summary>
