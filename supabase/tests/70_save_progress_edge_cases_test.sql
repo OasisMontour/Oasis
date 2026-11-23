@@ -38,6 +38,8 @@ select tests.ok(tests.throws(format('select save_progress(%L, 310, 310)', :'att'
   'but the student cannot move forward until they answer the new question');
 reset role;
 select id as newq from questions where lesson_id = '20000000-0000-0000-0000-000000000070' and at_s = 200 \gset
+-- new attempts start with an empty watch-credit bucket; pretend real time has passed
+update attempts set credit_at = now() - interval '1 hour' where id = :'att';
 set role authenticated;
 select submit_answer(:'att', :'newq', 'an answer');
 select tests.ok(not tests.throws(format('select save_progress(%L, 310, 310)', :'att')),
@@ -45,7 +47,7 @@ select tests.ok(not tests.throws(format('select save_progress(%L, 310, 310)', :'
 reset role;
 
 -- 2. The player's last save lands a hair past duration_s (YouTube reports 600.4, teacher saved floor = 600).
-update attempts set max_watched_s = 595 where id = :'att';
+update attempts set max_watched_s = 595, credit_at = now() - interval '1 hour' where id = :'att';
 set role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b1', false);
 select tests.ok(not tests.throws(format('select save_progress(%L, 600.4, 600.4)', :'att')),

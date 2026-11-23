@@ -19,7 +19,7 @@ import {
   getAssignmentClassName,
   getQuestion,
   getStudentLesson,
-  logFocusEvent,
+  sendFocusEvent,
   saveProgress,
   submitAnswer,
   type FocusKind,
@@ -66,6 +66,7 @@ export function StudentPlayer() {
   const [shaky, setShaky] = useState(false) // a save failed twice in a row
   const [note, setNote] = useState<string | null>(null)
   const [finishError, setFinishError] = useState(false)
+  const [resumeError, setResumeError] = useState(false)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -85,6 +86,8 @@ export function StudentPlayer() {
     ended: false,
     leaving: false,
     loggedNoFs: false,
+    pendingLogs: [] as { kind: FocusKind; videoS: number }[],
+    flushing: null as Promise<boolean> | null,
   })
   // Setters that keep the ref and React state in step. Stable: they only touch the ref and state setters.
   const setPhaseBoth = useCallback((p: Phase) => {
@@ -141,6 +144,39 @@ export function StudentPlayer() {
       cancelled = true
     }
   }, [assignmentId, applyServerState, setPhaseBoth])
+
+  // ------------------------------------------------------------------ focus log (durable)
+  // Focus events are queued and retried, and the student can't resume until theirs is recorded. Otherwise
+  // blocking just the log request (devtools, or flaky Wi-Fi) would mean leaving was never recorded.
+  const flushLogs = useCallback((): Promise<boolean> => {
+    const s = m.current
+    if (s.flushing) return s.flushing
+    const run = async () => {
+      while (s.pendingLogs.length && s.lesson) {
+        const e = s.pendingLogs[0]
+        try {
+          await sendFocusEvent(s.lesson.attempt_id, e.kind, e.videoS)
+          s.pendingLogs.shift()
+        } catch (err) {
+          if (classifyRpcError(err as { message?: string }) === 'not_assigned') s.pendingLogs.shift()
+          else return false
+        }
+      }
+      return true
+    }
+    s.flushing = run().finally(() => {
+      s.flushing = null
+    })
+    return s.flushing
+  }, [])
+
+  const logFocus = useCallback(
+    (kind: FocusKind) => {
+      m.current.pendingLogs.push({ kind, videoS: now() })
+      void flushLogs()
+    },
+    [flushLogs],
+  )
 
   // ------------------------------------------------------------------ saving
   const inflight = useRef<Promise<boolean> | null>(null)
@@ -283,6 +319,11 @@ export function StudentPlayer() {
   )
 
   // ------------------------------------------------------------------ YouTube
+  // Nothing inside the video can take focus or clicks (keyboard Tab included); our shield and controls do.
+  useEffect(() => {
+    mountRef.current?.setAttribute('inert', '')
+  }, [])
+
   useEffect(() => {
     if (!lesson || phase === 'done' || !mountRef.current) return
     if (player.current) return
@@ -360,6 +401,20 @@ export function StudentPlayer() {
     [],
   )
 
+  // ------------------------------------------------------------------ leaving the video
+  const goAway = useCallback(
+    (reason: Exclude<Away, null>, kind: FocusKind) => {
+      const s = m.current
+      if (s.phase !== 'playing' || s.leaving || !s.lesson) return
+      player.current?.pauseVideo()
+      void save()
+      if (s.away) return // one log per time away, not one per event
+      setAwayBoth(reason)
+      logFocus(kind)
+    },
+    [save, setAwayBoth, logFocus],
+  )
+
   // ------------------------------------------------------------------ the 250ms watchdog
   useEffect(() => {
     if (phase !== 'playing' || !playerReady) return
@@ -380,6 +435,13 @@ export function StudentPlayer() {
       setCurrent(t)
       setMaxShown(r.maxWatched)
       if (r.question && !s.question) showQuestion(r.question)
+      // Poll, don't just listen: listeners can be swallowed from the console, and a focused iframe
+      // hides window blur. hasFocus() is true while focus is anywhere inside this page, iframe included.
+      if (!s.away && !s.leaving) {
+        if (l.require_fullscreen && !s.loggedNoFs && !document.fullscreenElement) goAway('fullscreen', 'exit_fullscreen')
+        else if (document.visibilityState === 'hidden') goAway('tab', 'tab_hidden')
+        else if (l.require_fullscreen && !document.hasFocus()) goAway('blur', 'blur')
+      }
       if (!s.reconnecting && needsReconnect(s.maxWatched, s.confirmed)) {
         p.pauseVideo()
         setReconnectingBoth(true)
@@ -387,29 +449,22 @@ export function StudentPlayer() {
       }
     }, POLL_MS)
     return () => window.clearInterval(id)
-  }, [phase, playerReady, save, showQuestion, setReconnectingBoth])
+  }, [phase, playerReady, save, showQuestion, setReconnectingBoth, goAway])
 
   // Regular saves, plus fast retries while we're holding the video for Wi-Fi.
   useEffect(() => {
     if (phase !== 'playing') return
-    const id = window.setInterval(() => void save(), reconnecting ? RECONNECT_RETRY_MS : SAVE_EVERY_MS)
+    const id = window.setInterval(
+      () => {
+        void save()
+        void flushLogs()
+      },
+      reconnecting ? RECONNECT_RETRY_MS : SAVE_EVERY_MS,
+    )
     return () => window.clearInterval(id)
-  }, [phase, reconnecting, save])
+  }, [phase, reconnecting, save, flushLogs])
 
   // ------------------------------------------------------------------ leaving the video
-  const goAway = useCallback(
-    (reason: Exclude<Away, null>, kind: FocusKind) => {
-      const s = m.current
-      if (s.phase !== 'playing' || s.leaving || !s.lesson) return
-      player.current?.pauseVideo()
-      void save()
-      if (s.away) return // one log per time away, not one per event
-      setAwayBoth(reason)
-      logFocusEvent(s.lesson.attempt_id, kind, now())
-    },
-    [save, setAwayBoth],
-  )
-
   useEffect(() => {
     if (phase !== 'playing' || !lesson) return
     const strict = lesson.require_fullscreen
@@ -420,10 +475,10 @@ export function StudentPlayer() {
       if (document.visibilityState === 'hidden') goAway('tab', 'tab_hidden')
     }
     const onBlur = () => {
-      // Clicking into the YouTube iframe blurs the window. The click shield should stop that, but never
-      // count it as leaving: the results page shows "Left the video" for blur events.
+      // The video container is inert and covered by a click shield, so focus can never land in YouTube's
+      // iframe (which used to hide later blurs). A blur here means they really left the page.
       window.setTimeout(() => {
-        if (document.activeElement instanceof HTMLIFrameElement || document.visibilityState === 'hidden') return
+        if (document.visibilityState === 'hidden') return
         if (strict) goAway('blur', 'blur')
       }, 0)
     }
@@ -462,7 +517,7 @@ export function StudentPlayer() {
     } catch {
       if (!s.loggedNoFs) {
         s.loggedNoFs = true
-        logFocusEvent(s.lesson.attempt_id, 'no_fullscreen_support', now())
+        logFocus('no_fullscreen_support')
       }
     }
   }
@@ -482,7 +537,9 @@ export function StudentPlayer() {
   }
 
   const resume = async () => {
-    await enterFullscreen()
+    await enterFullscreen() // first, while the click still counts as a user gesture
+    setResumeError(false)
+    if (!(await flushLogs())) return setResumeError(true)
     setAwayBoth(null)
     if (!m.current.question && !m.current.reconnecting) player.current?.playVideo()
   }
@@ -601,6 +658,7 @@ export function StudentPlayer() {
                 <h2 id="away-h">
                   {away === 'fullscreen' ? 'Paused because you left fullscreen' : away === 'tab' ? 'Paused because you switched tabs' : 'Paused because you clicked away'}
                 </h2>
+                {resumeError && <p className="p-error">Couldn't reach Oasis. Check your Wi-Fi, then try again.</p>}
                 <button className="s-btn primary big" onClick={resume} autoFocus>
                   Keep watching
                 </button>

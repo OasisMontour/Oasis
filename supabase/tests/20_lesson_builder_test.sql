@@ -65,8 +65,9 @@ select save_lesson('{"id":"20000000-0000-0000-0000-000000000001","title":"Supply
   '[{"id":"30000000-0000-0000-0000-000000000001","at_s":10,"kind":"mc","prompt":"What is supply? (fixed typo)","choices":["A","B","C"],"correct_index":2},
     {"id":"30000000-0000-0000-0000-000000000002","at_s":50,"kind":"short","prompt":"Explain demand."}]');
 select tests.ok((select is_correct from answers where question_id = '30000000-0000-0000-0000-000000000001') = false, 'changing the MC key re-grades existing answers');
-select tests.ok((select score from attempts where student_id = '00000000-0000-0000-0000-0000000000b1') = 50, 'changing the MC key re-scores finished attempts');
 select tests.ok((select count(*) from answers) = 2, 'editing an answered lesson keeps student answers');
 commit;
+-- (scores are only readable through RPCs now, so check as the database owner)
+select tests.ok((select score from attempts where student_id = '00000000-0000-0000-0000-0000000000b1') = 50, 'changing the MC key re-scores finished attempts');
 
 \echo 'ALL LESSON BUILDER TESTS PASSED'

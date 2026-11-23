@@ -61,9 +61,8 @@ export async function finishAttempt(attemptId: string): Promise<void> {
 
 export type FocusKind = 'exit_fullscreen' | 'tab_hidden' | 'blur' | 'no_fullscreen_support'
 
-/** Fire and forget: a failed log must never interrupt the video. */
-export function logFocusEvent(attemptId: string, kind: FocusKind, videoS: number): void {
-  void supabase
-    .rpc('log_focus_event', { p_attempt: attemptId, p_kind: kind, p_video_s: Math.max(0, Math.round(videoS * 10) / 10) })
-    .then(({ error }) => error && console.warn('focus log failed', error.message))
+/** Throws on failure so the player can queue and retry: a dropped log must not mean an unrecorded exit. */
+export async function sendFocusEvent(attemptId: string, kind: FocusKind, videoS: number): Promise<void> {
+  const { error } = await supabase.rpc('log_focus_event', { p_attempt: attemptId, p_kind: kind, p_video_s: Math.max(0, Math.round(videoS * 10) / 10) })
+  if (error) throw error
 }

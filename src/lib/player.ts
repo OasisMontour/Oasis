@@ -25,7 +25,6 @@ export type StudentLesson = {
   max_watched_s: number
   last_pos_s: number
   finished_at: string | null
-  score: number | null
   questions: PlayerQuestion[]
 }
 
