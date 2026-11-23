@@ -55,8 +55,8 @@ button.sort, button.student { border: 0; background: none; padding: 2px; text-al
 button.student { display: flex; gap: 6px; } button.student .email { display: block; } button.student .name { font-weight: 600; }
 .status .dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; margin-right: 6px; background: #b8c4c1; }
 .status.finished .dot { background: var(--ok); } .status.in_progress .dot { background: var(--accent); }
-.mini-bar, .bar { display: block; height: 6px; background: #e6ecea; border-radius: 3px; margin-top: 4px; }
-.mini-bar > span, .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.mini-bar, .meter { display: block; height: 6px; background: #e6ecea; border-radius: 3px; margin-top: 4px; }
+.mini-bar > span, .meter > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .tag { font-size: .8rem; padding: 1px 8px; border-radius: 999px; border: 1px solid #cfd8d5; }
 .tag.warn, .tag.grade { background: #fff4e0; border-color: #e8b860; }
 .results-table tr.gone .name { color: var(--muted); }
@@ -65,5 +65,5 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .qhead { display: flex; justify-content: space-between; gap: 8px; } .prompt { margin: 4px 0; }
 .dist { list-style: none; padding: 0; display: grid; gap: 4px; }
 .dist li { display: grid; grid-template-columns: minmax(10em, 1fr) 2fr 2em; gap: 8px; align-items: center; }
-.dist li .bar { margin: 0; height: 10px; } .dist li.right .bar > span { background: var(--ok); }
+.dist li .meter { margin: 0; height: 10px; } .dist li.right .meter > span { background: var(--ok); }
 .missed-note { color: var(--danger); margin: 0; }

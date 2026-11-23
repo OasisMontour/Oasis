@@ -300,7 +300,7 @@ export function AssignmentResults() {
                               {right && <span className="sr-only"> (correct answer)</span>}
                               {right && <span className="ok small" aria-hidden="true"> ✓ correct</span>}
                             </span>
-                            <span className="bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
+                            <span className="meter" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
                             <span className="count small">{n}</span>
                           </li>
                         )

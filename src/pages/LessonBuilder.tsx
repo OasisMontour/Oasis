@@ -110,6 +110,7 @@ export function LessonBuilder() {
   }
 
   const loadVideo = () => {
+    if (!videoInput.trim()) return // blurring an empty field isn't an error
     const vid = parseYouTubeId(videoInput)
     if (!vid) return setVideoError("That doesn't look like a YouTube link.")
     if (vid === youtubeId) return
@@ -165,6 +166,7 @@ export function LessonBuilder() {
       else if (duration && q.at_s > duration) out.push(`${n}: ${formatTime(q.at_s)} is past the end of the video (${formatTime(duration)}).`)
       if (!q.prompt.trim()) out.push(`${n}: write the question.`)
       if (q.kind === 'mc' && q.choices.some((c) => !c.trim())) out.push(`${n}: fill in every choice or remove the empty ones.`)
+      if (q.kind === 'mc' && q.correct_index === null) out.push(`${n}: pick the right answer with the circle.`)
     })
     return out
   }
@@ -217,7 +219,15 @@ export function LessonBuilder() {
   return (
     <main className="page builder">
       <header className="bar">
-        <Link to="/teacher">← Back</Link>
+        <Link
+          to="/teacher"
+          onClick={(e) => {
+            // beforeunload only covers closing the tab; in-app navigation needs its own check
+            if (dirty && !window.confirm('You have unsaved changes. Leave without saving?')) e.preventDefault()
+          }}
+        >
+          ← Back
+        </Link>
         <strong>{isNew ? 'New lesson' : 'Edit lesson'}</strong>
         <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
       </header>
@@ -306,8 +316,10 @@ export function LessonBuilder() {
                       {q.choices.length > 2 && (
                         <button className="small" aria-label="Remove choice" onClick={() => {
                           const choices = q.choices.filter((_, j) => j !== ci)
-                          const ki = q.correct_index ?? 0
-                          update(q.key, { choices, correct_index: ki === ci ? 0 : ki > ci ? ki - 1 : ki })
+                          // Removing the right answer must not silently make choice A right (on an assigned
+                          // lesson that would re-grade every student on save). Make the teacher pick again.
+                          const ki = q.correct_index
+                          update(q.key, { choices, correct_index: ki === null || ki === ci ? null : ki > ci ? ki - 1 : ki })
                         }}>✕</button>
                       )}
                     </div>
