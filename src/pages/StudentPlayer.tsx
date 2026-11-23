@@ -709,6 +709,7 @@ export function StudentPlayer() {
             }}
             onDone={() => onAnswered(question.id)}
             onRejected={resync}
+            onNotAssigned={() => setFatal({ kind: 'not_assigned' })}
           />
         )}
       </div>
@@ -783,8 +784,10 @@ function QuestionPanel(props: {
   ensureReached: () => Promise<void>
   onDone: () => void
   onRejected: () => Promise<void>
+  /** The server says this student isn't in the class any more (taken off the Classroom roster mid-lesson). */
+  onNotAssigned: () => void
 }) {
-  const { attemptId, number, ensureReached, onDone, onRejected } = props
+  const { attemptId, number, ensureReached, onDone, onRejected, onNotAssigned } = props
   const [q, setQ] = useState<PlayerQuestion | null>(props.q.locked || props.q.prompt === undefined ? null : props.q)
   const [revealTry, setRevealTry] = useState(0)
   const [choice, setChoice] = useState<number | null>(null)
@@ -806,7 +809,12 @@ function QuestionPanel(props: {
           if (!cancelled) setQ(full)
           return
         } catch (e) {
-          if (classifyRpcError(e as { message?: string }) !== 'not_reached') break
+          const kind = classifyRpcError(e as { message?: string })
+          if (kind === 'not_assigned') {
+            if (!cancelled) onNotAssigned()
+            return
+          }
+          if (kind !== 'not_reached') break
         }
       }
       if (!cancelled) setError("Couldn't load the question. Check your Wi-Fi.")
@@ -861,6 +869,7 @@ function QuestionPanel(props: {
     } catch (e) {
       const kind = classifyRpcError(e as { message?: string })
       if (kind === 'already_answered') return onDone()
+      if (kind === 'not_assigned') return onNotAssigned()
       if (kind === 'not_reached') await onRejected()
       setError(kind === 'network' || kind === 'other' ? "Couldn't send your answer. Check your Wi-Fi and press Submit again." : 'Something went wrong. Press Submit again.')
       setBusy(false)
@@ -935,6 +944,9 @@ function FatalScreen({ fatal, email, onSwitch }: { fatal: Fatal; email: string; 
               <h1>This assignment isn't on this account</h1>
               <p>
                 You're signed in as <b>{email}</b>. If your teacher posted this in Google Classroom, switch to your school account.
+              </p>
+              <p>
+                Already on your school account? You may have been moved out of this class in Google Classroom. Ask your teacher.
               </p>
               <button className="s-btn primary big" onClick={onSwitch}>
                 Switch account
