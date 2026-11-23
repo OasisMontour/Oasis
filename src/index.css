@@ -67,3 +67,8 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .dist li { display: grid; grid-template-columns: minmax(10em, 1fr) 2fr 2em; gap: 8px; align-items: center; }
 .dist li .meter { margin: 0; height: 10px; } .dist li.right .meter > span { background: var(--ok); }
 .missed-note { color: var(--danger); margin: 0; }
+
+/* admin (plain on purpose) */
+.admin .stats { margin-top: 20px; }
+.table-wrap { overflow-x: auto; }
+.admin .results-table td { white-space: nowrap; }
