@@ -76,8 +76,13 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
         // Back from the Google consent screen: hand the refresh token to the server, which stores it and syncs.
         setParams({}, { replace: true })
         const refresh = session?.provider_refresh_token
-        if (refresh) return call({ action: 'connect', refresh_token: refresh })
-        return setMessage({ kind: 'error', text: "Google didn't send back Classroom access. Try Connect again." })
+        if (!refresh) return setMessage({ kind: 'error', text: "Google didn't send back Classroom access. Try Connect again." })
+        await call({ action: 'connect', refresh_token: refresh })
+        // The server keeps its own encrypted copy. Refreshing the Supabase session replaces the stored session with
+        // one that has no Google tokens, so the Classroom refresh token doesn't sit in this browser's localStorage
+        // (shared school computers, any future XSS).
+        await supabase.auth.refreshSession().catch(() => undefined)
+        return
       }
       const stale = !s.last_synced_at || Date.now() - new Date(s.last_synced_at).getTime() > AUTO_SYNC_AFTER_MS
       if (s.connected && stale) call({ action: 'sync' }, true)
