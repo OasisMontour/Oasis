@@ -11,8 +11,9 @@ export function Changelog() {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     supabase.rpc('changelog').then(({ data, error }) => {
-      if (error) setError(error.message)
-      setEntries((data as ChangelogEntry[]) ?? [])
+      // On failure show only the error, not "Nothing here yet" under it.
+      if (error) setError(`Couldn't load the changelog: ${error.message}`)
+      else setEntries((data as ChangelogEntry[]) ?? [])
     })
   }, [])
   return (

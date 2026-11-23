@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { AdminAssignments } from './AdminAssignments'
 import { supabase } from '../lib/supabase'
-import { looksLikeEmail, teacherStatus, VIA_LABEL, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
+import { looksLikeEmail, teacherStatus, VIA_LABEL, type AdminAiUsage, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
 import { formatDuration } from '../lib/duration'
 import { AdminBugs } from './AdminBugs'
 import { AdminSignups } from './AdminSignups'
 
+// "Nov 23, 7 AM": enough to spot a stale sync or a teacher who's gone quiet, and keeps the table narrow.
+const whenShort = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' }) : '–')
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–')
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
 
 // Admin page for the Oasis team. Overview, teacher sign-ups, and teacher access (approve, pre-approve, remove).
 // Students are minors: the server only ever sends counts for them, never names or emails.
@@ -16,15 +18,17 @@ export function AdminHome() {
   const { profile, signOut } = useAuth()
   const [data, setData] = useState<AdminDashboard | null>(null)
   const [usage, setUsage] = useState<AdminUsage | null>(null)
+  const [ai, setAi] = useState<AdminAiUsage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [d, u] = await Promise.all([supabase.rpc('admin_dashboard'), supabase.rpc('admin_usage')])
-    const err = d.error?.message ?? u.error?.message
+    const [d, u, a] = await Promise.all([supabase.rpc('admin_dashboard'), supabase.rpc('admin_usage'), supabase.rpc('admin_ai_usage')])
+    const err = d.error?.message ?? u.error?.message ?? a.error?.message
     if (err) setError(`Couldn't load the admin dashboard: ${err}`)
     if (!d.error) setData(d.data as AdminDashboard)
     if (!u.error) setUsage(u.data as AdminUsage)
+    if (!a.error) setAi(a.data as AdminAiUsage)
   }, [])
   useEffect(() => {
     load()
@@ -35,6 +39,11 @@ export function AdminHome() {
     setNotice(null)
     setError(msg)
   }, [])
+  const changed = async (msg: string) => {
+    setError(null)
+    setNotice(msg)
+    await load()
+  }
 
   return (
     <main className="page admin">
@@ -48,7 +57,7 @@ export function AdminHome() {
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="ok" role="status">{notice}</p>}
 
-      <AdminBugs onError={reportError} />
+      {data && <AdminSignups part="waiting" data={data} onChange={changed} onError={reportError} />}
 
       {usage && <Usage usage={usage} />}
 
@@ -64,81 +73,20 @@ export function AdminHome() {
         </ul>
       )}
 
-      {data && (
-        <AdminSignups
-          data={data}
-          onChange={async (msg) => {
-            setError(null)
-            setNotice(msg)
-            await load()
-          }}
-          onError={reportError}
-        />
-      )}
+      {ai && <AiUsage ai={ai} />}
 
       <Teachers
         teachers={data?.teachers ?? null}
         usage={usage?.teachers ?? []}
-        onChange={async (msg) => {
-          setError(null)
-          setNotice(msg)
-          await load()
-        }}
-        onError={(msg) => {
-          setNotice(null)
-          setError(msg)
-        }}
+        onChange={changed}
+        onError={reportError}
       />
 
-      <section>
-        <h2>Assignments</h2>
-        {data && data.assignments.length === 0 && <p className="muted">No assignments yet.</p>}
-        {data && data.assignments.length > 0 && (
-          <div className="table-wrap">
-            <table className="results-table">
-              <thead>
-                <tr>
-                  <th>Assigned</th>
-                  <th>Teacher</th>
-                  <th>Class</th>
-                  <th>Lesson</th>
-                  <th>Started</th>
-                  <th>Finished</th>
-                  <th>Avg score</th>
-                  <th>Flagged</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.assignments.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      {day(a.created_at)}
-                      {a.due_at && <div className="muted small">due {day(a.due_at)}</div>}
-                    </td>
-                    <td>{a.teacher}</td>
-                    <td>{a.class}</td>
-                    <td>
-                      {a.lesson}
-                      {!a.posted_to_classroom && <div className="muted small">not posted to Classroom</div>}
-                    </td>
-                    <td>{a.started} / {a.students}</td>
-                    <td>{a.finished} / {a.students}</td>
-                    <td>{a.avg_score ?? '–'}</td>
-                    <td>
-                      {a.flagged > 0 ? (
-                        <span className="tag warn" title={`${a.focus_events} times away from the video`}>{a.flagged} students</span>
-                      ) : (
-                        <span className="muted">0</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="muted small">Newest 200. Student-level results stay on each teacher's results page.</p>
-      </section>
+      {data && <AdminSignups part="access" data={data} onChange={changed} onError={reportError} />}
+
+      <AdminBugs onError={reportError} />
+
+      <AdminAssignments assignments={data?.assignments ?? null} />
 
       <section>
         <h2>Allowlist changes</h2>
@@ -222,6 +170,39 @@ function Usage({ usage }: { usage: AdminUsage }) {
       <p className="muted small">
         Time in app counts only while an Oasis tab is open and visible. Students are counted, never listed by name here.
       </p>
+    </section>
+  )
+}
+
+// AI grading spend check. Counts only: which answers were graded and for whom stays on the teachers' results pages.
+function AiUsage({ ai }: { ai: AdminAiUsage }) {
+  const pct = ai.global_monthly_cap > 0 ? Math.round((ai.month_answers / ai.global_monthly_cap) * 100) : 0
+  return (
+    <section>
+      <h2>
+        AI grading <span className={ai.enabled ? 'tag' : 'tag warn'}>{ai.enabled ? 'on' : 'off'}</span>
+      </h2>
+      <ul className="stats" aria-label="AI grading">
+        <Stat label="Answers graded today" value={ai.today_answers} note={`cap ${ai.teacher_daily_cap} per teacher per day`} />
+        <Stat label="Answers graded this month" value={ai.month_answers} of={ai.global_monthly_cap} note={`${pct}% of the monthly cap`} />
+        {ai.providers.map((p) => {
+          const parked = p.cooldown_until && new Date(p.cooldown_until) > new Date()
+          return (
+            <Stat
+              key={p.provider}
+              label={`${p.provider} calls today`}
+              value={p.calls}
+              note={
+                parked
+                  ? `paused until ${new Date(p.cooldown_until!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                  : `${p.failures} failed`
+              }
+            />
+          )
+        })}
+      </ul>
+      {ai.providers.length === 0 && <p className="muted small">No AI calls yet today.</p>}
+      {pct >= 80 && <p className="error small">Over 80% of this month's AI cap is used. Once it's hit, short answers stay ungraded until their teacher grades them.</p>}
     </section>
   )
 }
@@ -320,7 +301,6 @@ function Teachers({
                 <th>Teacher</th>
                 <th>Status</th>
                 <th>Last seen</th>
-                <th>Time, 7 days</th>
                 <th>Classroom sync</th>
                 <th>Classes</th>
                 <th>Students</th>
@@ -343,9 +323,11 @@ function Teachers({
                       <span className={s.warn ? 'tag warn' : 'tag'}>{s.label}</span>
                       {t.via && <div className="muted small">{VIA_LABEL[t.via]}{t.added_by ? ` (${t.added_by})` : ''}</div>}
                     </td>
-                    <td>{when(u?.last_seen ?? null)}</td>
-                    <td>{u ? formatDuration(u.active_s_7d) : '–'}</td>
-                    <td>{when(t.last_synced_at)}</td>
+                    <td>
+                      {whenShort(u?.last_seen ?? null)}
+                      {u && <div className="muted small">{formatDuration(u.active_s_7d)} past 7 days</div>}
+                    </td>
+                    <td>{whenShort(t.last_synced_at)}</td>
                     <td>{t.classes}</td>
                     <td>{t.students}</td>
                     <td>{t.lessons}</td>
