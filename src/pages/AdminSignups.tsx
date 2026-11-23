@@ -4,13 +4,16 @@ import { looksLikeDomain, signupReason, type AdminDashboard } from '../lib/admin
 
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
 
-// Teacher sign-ups waiting for an admin, approved school domains, and blocked accounts.
-// Everything goes through admin_* RPCs that re-check the caller is an admin.
+// Teacher sign-ups waiting for an admin (part="waiting", top of the page), or trusted school domains and
+// blocked accounts (part="access", next to Teachers). Everything goes through admin_* RPCs that re-check
+// the caller is an admin.
 export function AdminSignups({
+  part,
   data,
   onChange,
   onError,
 }: {
+  part: 'waiting' | 'access'
   data: AdminDashboard
   onChange: (msg: string) => Promise<void>
   onError: (msg: string) => void
@@ -34,8 +37,8 @@ export function AdminSignups({
     await run('admin_add_domain', { p_domain: d }, `${d} added. Sign-ups from ${d} accounts will be marked as from a trusted school.`)
   }
 
-  return (
-    <>
+  if (part === 'waiting')
+    return (
       <section>
         <h2>Teacher sign-ups waiting {data.signups.length > 0 && <span className="tag warn">{data.signups.length}</span>}</h2>
         {data.signups.length === 0 && (
@@ -86,12 +89,17 @@ export function AdminSignups({
             </table>
           </div>
         )}
-        <p className="muted small">
-          Fewer than 5 students, or class names like "test", is a red flag: a student with a personal Gmail can make a Classroom class in
-          seconds, and a teacher account can see the answer keys of every shared lesson.
-        </p>
+        {data.signups.length > 0 && (
+          <p className="muted small">
+            Fewer than 5 students, or class names like "test", is a red flag: a student with a personal Gmail can make a Classroom class in
+            seconds, and a teacher account can see the answer keys of every shared lesson.
+          </p>
+        )}
       </section>
+    )
 
+  return (
+    <>
       <section>
         <div className="section-head">
           <h2>Trusted school domains</h2>

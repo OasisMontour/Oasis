@@ -94,6 +94,16 @@ export function looksLikeEmail(s: string) {
 }
 
 export type UsageDay = { day: string; students: number; teachers: number; visits: number; active_s: number }
+// admin_ai_usage(): this month's AI grading use. Counts only.
+export type AdminAiUsage = {
+  enabled: boolean
+  teacher_daily_cap: number
+  global_monthly_cap: number
+  month_answers: number
+  today_answers: number
+  providers: { provider: string; calls: number; failures: number; cooldown_until: string | null; last_error: string | null }[]
+}
+
 export type AdminUsage = {
   active: {
     today_students: number; today_teachers: number
