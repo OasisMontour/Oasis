@@ -59,7 +59,7 @@ declare
   promoted boolean := false;
 begin
   if me is null then raise exception 'admins only' using errcode = 'insufficient_privilege'; end if;
-  if e is null or length(e) > 254 or e !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+  if e is null or length(e) > 254 or e !~ '^[a-z0-9._%+''-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$' then
     raise exception 'not a valid email address';
   end if;
 

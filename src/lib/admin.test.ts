@@ -21,6 +21,7 @@ describe('looksLikeEmail', () => {
     expect(looksLikeEmail('nope')).toBe(false)
     expect(looksLikeEmail('a@b')).toBe(false)
     expect(looksLikeEmail('a b@c.d')).toBe(false)
+    expect(looksLikeEmail('"><img/src=x/onerror=alert(1)>@a.bc')).toBe(false)
   })
 })
 

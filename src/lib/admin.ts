@@ -61,7 +61,8 @@ export function teacherStatus(t: AdminTeacher): { label: string; warn: boolean }
 }
 
 export function looksLikeEmail(s: string) {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim())
+  // Same rule as admin_add_teacher on the server.
+  return /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(s.trim().toLowerCase())
 }
 
 export type UsageDay = { day: string; students: number; teachers: number; visits: number; active_s: number }

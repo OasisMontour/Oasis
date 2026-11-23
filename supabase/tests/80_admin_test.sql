@@ -52,6 +52,7 @@ select tests.ok((public.admin_add_teacher('  New.Teacher@District.org ') ->> 'al
 select tests.ok((public.admin_add_teacher('new.teacher@district.org') ->> 'already_listed')::boolean, 'adding twice reports already listed');
 select tests.ok(tests.throws($$select public.admin_add_teacher('not an email')$$), 'invalid email is rejected');
 select tests.ok(tests.throws($$select public.admin_add_teacher(null)$$), 'null email is rejected');
+select tests.ok(tests.throws($$select public.admin_add_teacher('"><img/src=x/onerror=alert(1)>@a.bc')$$), 'markup in an email is rejected');
 
 -- add someone who signed in before being listed: promoted
 select tests.ok((public.admin_add_teacher('early.teacher@district.org') ->> 'promoted')::boolean, 'early sign-in with no classes is promoted');
@@ -77,6 +78,28 @@ select tests.ok(not exists (select 1 from teacher_allowlist where email = 's1@di
 select tests.ok((select role from profiles where email = 's1@district.org') = 'student', 'refused student is still a student');
 select tests.ok(not exists (select 1 from teacher_allowlist where email = 'early.teacher@district.org'), 'removed teacher is off the allowlist');
 select tests.ok((select role from profiles where email = 'early.teacher@district.org') = 'student', 'removed teacher is a student again');
+
+-- red team: a removed teacher loses access to their classes' data, and gets it back when re-added
+begin; set local role authenticated; select tests.become('00000000-0000-0000-0000-0000000000d1');
+select public.admin_remove_teacher('t1@district.org'); commit;
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000a1');
+select tests.ok((select count(*) from classes) = 0, 'removed teacher cannot read their classes');
+select tests.ok((select count(*) from enrollments) = 0 and (select count(*) from roster_entries) = 0, '...or rosters');
+select tests.ok((select count(*) from profiles where id <> auth.uid()) = 0, '...or student names');
+select tests.ok((select count(*) from attempts) = 0 and (select count(*) from answers) = 0 and (select count(*) from focus_events) = 0, '...or student work');
+select tests.ok((select count(*) from lessons) = 0 and (select count(*) from questions) = 0, '...or their lessons and answer keys');
+select tests.ok(tests.throws($$select public.assignment_results((select id from assignments limit 1))$$), '...or results');
+select tests.ok(tests.throws($$select public.grade_answer('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', true)$$), '...and cannot grade');
+rollback;
+select tests.ok((select count(*) from classes where teacher_id = '00000000-0000-0000-0000-0000000000a1') = :t1_classes, 'removing a teacher deletes nothing');
+begin; set local role authenticated; select tests.become('00000000-0000-0000-0000-0000000000d1');
+select tests.ok((public.admin_add_teacher('t1@district.org') ->> 'promoted')::boolean, 're-adding the teacher promotes them again'); commit;
+begin; set local role authenticated; select tests.become('00000000-0000-0000-0000-0000000000a1');
+select tests.ok((select count(*) from classes) = :t1_classes, 're-added teacher sees their classes again');
+commit;
+update teacher_allowlist set added_by = null where email = 't1@district.org';
 
 -- revoking admin takes effect immediately
 delete from admins where email = 'boss@oasis.dev';

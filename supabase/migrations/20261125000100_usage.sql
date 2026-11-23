@@ -28,7 +28,12 @@ create function public.track_usage(p_visit boolean default false) returns void
 language plpgsql security definer set search_path = public as $$
 declare u usage_days; gap numeric;
 begin
-  if auth.uid() is null or not exists (select 1 from profiles where id = auth.uid()) then return; end if;
+  -- Only people the pilot is about: teachers, and students enrolled in a class. Anyone else with a Google
+  -- account can sign in, but they shouldn't show up as "active students" (or leave a trail here).
+  if not exists (select 1 from profiles p where p.id = auth.uid()
+                 and (p.role = 'teacher' or exists (select 1 from enrollments e where e.student_id = p.id))) then
+    return;
+  end if;
 
   insert into usage_days (user_id, day) values (auth.uid(), public.school_day()) on conflict do nothing;
   select * into u from usage_days where user_id = auth.uid() and day = public.school_day() for update;
@@ -48,57 +53,59 @@ begin
 end $$;
 
 -- Aggregates only. Teachers are staff, so they're listed by email; students are counts and averages.
+-- Aggregates only. Teachers are staff, so they're listed by email; students are counts and averages.
+-- Admins' own browsing is left out.
 create function public.admin_usage() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare today date := public.school_day();
 begin
   if not public.is_admin() then raise exception 'admins only' using errcode = 'insufficient_privilege'; end if;
-  return jsonb_build_object(
-    'active', (
-      select jsonb_build_object(
-        'today_students', count(distinct d.user_id) filter (where d.day = today and p.role = 'student'),
-        'today_teachers', count(distinct d.user_id) filter (where d.day = today and p.role = 'teacher'),
-        'week_students', count(distinct d.user_id) filter (where d.day > today - 7 and p.role = 'student'),
-        'week_teachers', count(distinct d.user_id) filter (where d.day > today - 7 and p.role = 'teacher'),
-        'month_students', count(distinct d.user_id) filter (where d.day > today - 30 and p.role = 'student'),
-        'month_teachers', count(distinct d.user_id) filter (where d.day > today - 30 and p.role = 'teacher'),
-        'visits_30d', coalesce(sum(d.visits) filter (where d.day > today - 30), 0),
-        'visits_total', coalesce(sum(d.visits), 0),
-        'active_s_30d', coalesce(sum(d.active_s) filter (where d.day > today - 30), 0),
-        'active_s_total', coalesce(sum(d.active_s), 0))
-      from usage_days d join profiles p on p.id = d.user_id),
-
-    -- Per student: average and median minutes in the app over the last 7 days, among students active that week.
-    'students_week', (
-      select jsonb_build_object(
-        'avg_active_s', coalesce(round(avg(s)), 0),
-        'median_active_s', coalesce(round(percentile_cont(0.5) within group (order by s)), 0))
-      from (select sum(d.active_s) s from usage_days d join profiles p on p.id = d.user_id
-            where p.role = 'student' and d.day > today - 7 group by d.user_id) x),
-
-    'video', jsonb_build_object(
-      'watched_s_total', (select coalesce(round(sum(max_watched_s)), 0) from attempts),
-      'answers_total', (select count(*) from answers)),
-
-    'daily', (
-      select jsonb_agg(jsonb_build_object(
-        'day', g.day,
-        'students', (select count(*) from usage_days d join profiles p on p.id = d.user_id where d.day = g.day and p.role = 'student'),
-        'teachers', (select count(*) from usage_days d join profiles p on p.id = d.user_id where d.day = g.day and p.role = 'teacher'),
-        'visits', (select coalesce(sum(visits), 0) from usage_days d where d.day = g.day),
-        'active_s', (select coalesce(sum(active_s), 0) from usage_days d where d.day = g.day)) order by g.day)
-      from (select (today - i) as day from generate_series(0, 29) i) g),
-
-    'teachers', coalesce((
-      select jsonb_agg(t order by t ->> 'email') from (
+  return (
+    with u as (
+      select d.user_id, p.role, d.day, d.visits, d.active_s, d.last_beat_at
+      from usage_days d join profiles p on p.id = d.user_id
+      where not exists (select 1 from admins a where a.email = p.email))
+    select jsonb_build_object(
+      'active', (
         select jsonb_build_object(
-          'email', p.email,
-          'visits', coalesce(sum(d.visits), 0),
-          'active_s_7d', coalesce(sum(d.active_s) filter (where d.day > today - 7), 0),
-          'active_s_total', coalesce(sum(d.active_s), 0),
-          'last_seen', max(d.last_beat_at)) as t
-        from profiles p left join usage_days d on d.user_id = p.id
-        where p.role = 'teacher' group by p.email) x), '[]'::jsonb));
+          'today_students', count(distinct user_id) filter (where day = today and role = 'student'),
+          'today_teachers', count(distinct user_id) filter (where day = today and role = 'teacher'),
+          'week_students', count(distinct user_id) filter (where day > today - 7 and role = 'student'),
+          'week_teachers', count(distinct user_id) filter (where day > today - 7 and role = 'teacher'),
+          'month_students', count(distinct user_id) filter (where day > today - 30 and role = 'student'),
+          'month_teachers', count(distinct user_id) filter (where day > today - 30 and role = 'teacher'),
+          'visits_30d', coalesce(sum(visits) filter (where day > today - 30), 0),
+          'visits_total', coalesce(sum(visits), 0),
+          'active_s_30d', coalesce(sum(active_s) filter (where day > today - 30), 0),
+          'active_s_total', coalesce(sum(active_s), 0))
+        from u),
+      -- Per student: average and median time in the app over the last 7 days, among students active that week.
+      'students_week', (
+        select jsonb_build_object(
+          'avg_active_s', coalesce(round(avg(s)), 0),
+          'median_active_s', coalesce(round(percentile_cont(0.5) within group (order by s)), 0))
+        from (select sum(active_s) s from u where role = 'student' and day > today - 7 group by user_id) x),
+      'video', jsonb_build_object(
+        'watched_s_total', (select coalesce(round(sum(max_watched_s)), 0) from attempts),
+        'answers_total', (select count(*) from answers)),
+      'daily', (
+        select jsonb_agg(jsonb_build_object(
+          'day', g.day,
+          'students', (select count(*) from u where u.day = g.day and role = 'student'),
+          'teachers', (select count(*) from u where u.day = g.day and role = 'teacher'),
+          'visits', (select coalesce(sum(visits), 0) from u where u.day = g.day),
+          'active_s', (select coalesce(sum(active_s), 0) from u where u.day = g.day)) order by g.day)
+        from (select (today - i) as day from generate_series(0, 29) i) g),
+      'teachers', coalesce((
+        select jsonb_agg(t order by t ->> 'email') from (
+          select jsonb_build_object(
+            'email', p.email,
+            'visits', coalesce(sum(u.visits), 0),
+            'active_s_7d', coalesce(sum(u.active_s) filter (where u.day > today - 7), 0),
+            'active_s_total', coalesce(sum(u.active_s), 0),
+            'last_seen', max(u.last_beat_at)) as t
+          from profiles p left join u on u.user_id = p.id
+          where p.role = 'teacher' group by p.email) x), '[]'::jsonb)));
 end $$;
 
 revoke all on function public.school_day(timestamptz), public.track_usage(boolean), public.admin_usage() from public, anon;
