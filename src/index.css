@@ -60,6 +60,8 @@ button.student { display: flex; gap: 6px; } button.student .email { display: blo
 .mini-bar > span, .meter > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .tag { font-size: .8rem; padding: 1px 8px; border-radius: 999px; border: 1px solid #cfd8d5; }
 .tag.warn, .tag.grade { background: #fff4e0; border-color: #e8b860; }
+.tag.ai { background: #eef0ff; border-color: #a9b2f0; }
+.ai-note { margin: 4px 0; color: #3d4560; }
 .results-table tr.gone .name { color: var(--muted); }
 .answers, .qstats { padding-left: 0; list-style: none; display: grid; gap: 8px; }
 blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); border-left: 3px solid #cfd8d5; white-space: pre-wrap; }

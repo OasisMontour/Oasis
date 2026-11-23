@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCsv, csvField, csvFilename, questionStats, sortStudents, summarize, type ResultQuestion, type ResultStudent } from './results'
+import { aiPending, aiToReview, buildCsv, csvField, csvFilename, questionStats, sortStudents, summarize, type ResultQuestion, type ResultStudent } from './results'
 
 const questions: ResultQuestion[] = [
   { id: 'q1', at_s: 10, kind: 'mc', prompt: 'Pick one', choices: ['Red', 'Blue', 'Green'], correct_index: 1 },
@@ -88,5 +88,30 @@ describe('csv', () => {
 
   it('makes a safe filename', () => {
     expect(csvFilename('Cells: Part 1/2', 'Period 3')).toBe('Cells Part 12 - Period 3.csv')
+  })
+})
+
+describe('AI grading helpers', () => {
+  const qs: ResultQuestion[] = [...questions, { id: 'q3', at_s: 30, kind: 'short', prompt: 'And?', choices: null, correct_index: null }]
+  const st = [
+    student({ answers: {
+      q1: { response: '1', is_correct: null, graded_by: null }, // MC never counts
+      q2: { response: 'a', is_correct: null, graded_by: null, ai_checked: false },
+      q3: { response: 'b', is_correct: null, graded_by: null, ai_checked: true, ai_reason: 'unsure' },
+    } }),
+    student({ answers: {
+      q2: { response: 'c', is_correct: true, graded_by: 'ai', ai_checked: true, ai_reason: 'ok' },
+      q3: { response: 'd', is_correct: null, graded_by: null },
+    } }),
+  ]
+  it('aiPending counts ungraded short answers AI has not looked at', () => {
+    expect(aiPending(st, qs)).toBe(2)
+  })
+  it('aiToReview counts unconfirmed AI grades', () => {
+    expect(aiToReview(st[0])).toBe(0)
+    expect(aiToReview(st[1])).toBe(1)
+  })
+  it('CSV says which grades came from AI', () => {
+    expect(buildCsv({ questions: qs, students: [st[1]] })).toContain('c (correct, by AI)')
   })
 })

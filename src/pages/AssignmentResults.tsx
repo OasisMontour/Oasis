@@ -2,8 +2,11 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatTime } from '../lib/time'
+import { aiRunMessage, runAiGrading, type AiBatch } from '../lib/aiGrade'
 import {
   STATUS_LABEL,
+  aiPending,
+  aiToReview,
   buildCsv,
   choiceLetter,
   csvFilename,
@@ -32,6 +35,7 @@ export function AssignmentResults() {
   const [notice, setNotice] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [aiRunning, setAiRunning] = useState<string | null>(null)
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'name', dir: 'asc' })
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [onlyToGrade, setOnlyToGrade] = useState(false)
@@ -146,6 +150,28 @@ export function AssignmentResults() {
     setInfo(text)
   }
 
+  const gradeWithAi = async () => {
+    if (!id || aiRunning) return
+    setNotice(null)
+    setInfo(null)
+    setAiRunning('Grading with AI…')
+    const run = await runAiGrading(
+      async () => {
+        const { data: res, error: err } = await supabase.functions.invoke<AiBatch>('ai-grade', { body: { assignment_id: id } })
+        return err || !res ? null : res
+      },
+      (p) => {
+        setAiRunning(`Grading with AI… ${p.graded + p.unsure + p.skipped} done`)
+        load(true)
+      },
+    )
+    setAiRunning(null)
+    await load(true)
+    const msg = aiRunMessage(run)
+    if (msg.isError) setNotice(msg.text)
+    else setInfo(msg.text)
+  }
+
   if (loading && !data) return <main className="page results"><BackLink /><p className="muted" role="status">Loading results…</p></main>
   if (!data || !summary || !stats) {
     return (
@@ -158,6 +184,7 @@ export function AssignmentResults() {
   }
 
   const { assignment, questions, students } = data
+  const aiLeft = assignment.ai_grade_short ? aiPending(students, questions) : 0
   const due = assignment.due_at ? new Date(assignment.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : null
   const sortHeader = (key: SortKey, label: string) => (
     <th aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
@@ -178,6 +205,11 @@ export function AssignmentResults() {
           </p>
         </div>
         <div className="row">
+          {aiLeft > 0 && (
+            <button onClick={gradeWithAi} disabled={!!aiRunning} title="AI suggests a grade for each short answer. You can change any of them.">
+              {aiRunning ?? `Grade ${aiLeft} with AI`}
+            </button>
+          )}
           {assignment.google_coursework_id && students.some((s) => s.status === 'finished') && (
             <button onClick={sendGrades} disabled={sending}>{sending ? 'Sending…' : 'Send grades to Classroom'}</button>
           )}
@@ -227,6 +259,7 @@ export function AssignmentResults() {
                   const key = studentKey(s)
                   const isOpen = open.has(key)
                   const toGrade = needsGrading(s, questions)
+                  const aiGraded = aiToReview(s)
                   return (
                     <Fragment key={key}>
                       <tr className={`${isOpen ? 'open' : ''}${s.on_roster ? '' : ' gone'}`}>
@@ -250,6 +283,7 @@ export function AssignmentResults() {
                               </span>
                             )}
                             {toGrade > 0 && <span className="tag grade">{toGrade} to grade</span>}
+                            {aiGraded > 0 && <span className="tag ai" title="Graded by AI. Open to check or change.">{aiGraded} AI-graded</span>}
                             {!s.on_roster && <span className="tag gone" title="Not on the Google Classroom roster anymore">No longer in class</span>}
                           </span>
                         </td>
@@ -382,11 +416,21 @@ function StudentAnswers({
             ) : (
               <>
                 <blockquote className="short">{a.response}</blockquote>
+                {a.ai_reason && (
+                  <p className="small ai-note">
+                    <span className="tag ai">AI</span>{' '}
+                    {a.graded_by === 'ai' ? '' : a.is_correct === null ? "wasn't sure: " : 'said: '}
+                    {a.ai_reason}
+                  </p>
+                )}
                 <div className="row grade-row">
                   <span className={`small verdict ${verdict}`}>
                     {verdict === 'ungraded' ? 'Needs grading' : verdict === 'correct' ? '✓ Marked correct' : '✗ Marked incorrect'}
-                    {a.graded_by === 'ai' && ' (by AI)'}
+                    {a.graded_by === 'ai' && ' by AI'}
                   </span>
+                  {a.graded_by === 'ai' && a.is_correct !== null && (
+                    <button className="small" onClick={() => onGrade(student, q.id, a.is_correct as boolean)}>Looks right</button>
+                  )}
                   <button className="small good" aria-pressed={a.is_correct === true} onClick={() => onGrade(student, q.id, true)} disabled={a.is_correct === true}>
                     Correct
                   </button>
