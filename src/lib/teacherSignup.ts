@@ -6,7 +6,17 @@ export type ClaimResponse =
   | { ok: true; status: 'pending' | 'refused'; reason: string }
   | { ok: false; error: string }
 
-export type MyRequest = { status: 'pending' | 'approved' | null; reason: string | null; requested_at: string | null; blocked: boolean }
+export type MyRequest = {
+  status: 'pending' | 'approved' | null
+  reason: string | null
+  requested_at: string | null
+  blocked: boolean
+  /** An admin took this account's teacher access away. */
+  removed: boolean
+}
+
+export const REMOVED_TEXT =
+  "An Oasis admin removed this account's teacher access, so it works as a student account now. Your classes, lessons and results are kept. If that's a mistake, tell the Oasis team with Report a bug."
 
 /** Why the sign-up is waiting for the Oasis team, in the teacher's terms. */
 export function pendingText(reason: string | null): string {
@@ -33,6 +43,8 @@ export function refusedText(reason: string, email: string | undefined): string {
       return `You picked a different Google account on Google's screen. Try again and pick ${email ?? 'the account you signed in with'}.`
     case 'student_account':
       return 'This account is already a student in Oasis classes, so it can’t be a teacher account. Sign out and use your teacher account.'
+    case 'removed':
+      return REMOVED_TEXT
     case 'blocked':
       return "This account can't be set up as a teacher. If you think that's a mistake, use Report a bug to reach the Oasis team."
     default:

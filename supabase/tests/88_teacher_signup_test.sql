@@ -132,14 +132,18 @@ select tests.ok((select role from profiles where email = 'x@evil.org') = 'teache
 select tests.ok(not exists (select 1 from google_tokens where user_id = '00000000-0000-0000-0000-0000000000e4'), 'deny drops their stored Classroom token');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e4', tests.ev('kid@gmail.com', null, true, 3)) ->> 'reason' = 'blocked',
   'a denied account cannot sign up again');
-select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', true, 2)) ->> 'reason' = 'blocked',
-  'a removed teacher cannot walk back in, even as a Google-verified teacher');
+select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', true, 2)) ->> 'reason' = 'removed',
+  'a removed teacher cannot walk back in, even as a Google-verified teacher, and is told they were removed');
 select tests.ok((select role from profiles where email = 'new.t@district.org') = 'student', '... and stays a student');
 
 begin;
 set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000e4');
 select tests.ok((public.my_teacher_request() ->> 'blocked')::boolean, 'a blocked user is told so');
+select tests.ok(not (public.my_teacher_request() ->> 'removed')::boolean, '... as a denied sign-up, not a removed teacher');
+select tests.become('00000000-0000-0000-0000-0000000000e2');
+select tests.ok((public.my_teacher_request() ->> 'removed')::boolean and public.my_teacher_request() ->> 'status' is null,
+  'a removed teacher sees "removed", not a pending sign-up');
 select tests.become('00000000-0000-0000-0000-0000000000e1');
 select tests.ok(public.admin_unblock_teacher('KID@gmail.com') ->> 'email' = 'kid@gmail.com', 'admin can unblock');
 select tests.ok(public.admin_add_teacher('new.t@district.org') ->> 'promoted' = 'true', 'pre-approving a removed teacher unblocks and restores them');

@@ -74,7 +74,7 @@ export type AdminDashboard = {
   teachers: AdminTeacher[]
   signups: AdminSignup[]
   domains: { domain: string; added_by: string | null; added_at: string }[]
-  blocked: { email: string; added_by: string | null; added_at: string }[]
+  blocked: { email: string; kind: 'denied' | 'removed'; added_by: string | null; added_at: string }[]
   assignments: AdminAssignment[]
   audit: AdminAudit[]
 }

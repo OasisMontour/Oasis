@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { listMyAssignments } from '../lib/studentApi'
+import { supabase } from '../lib/supabase'
+import { REMOVED_TEXT, type MyRequest } from '../lib/teacherSignup'
 import { assignmentStatus, dueLabel, progressPct, splitAssignments, type StudentAssignmentRow } from '../lib/player'
 import { formatTime } from '../lib/time'
 import '../student.css'
@@ -13,6 +15,11 @@ export function StudentHome() {
   const [rows, setRows] = useState<StudentAssignmentRow[] | null>(null)
   const [classCount, setClassCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // A teacher whose access an admin removed lands here as a student. Tell them, instead of "no classes, personal Gmail?".
+  const [removed, setRemoved] = useState(false)
+  useEffect(() => {
+    supabase.rpc('my_teacher_request').then(({ data }) => setRemoved((data as MyRequest | null)?.removed === true))
+  }, [])
 
   const load = useCallback(() => {
     setError(null)
@@ -47,6 +54,13 @@ export function StudentHome() {
       <main className="s-main">
         <h1>Hi, {profile?.name?.split(' ')[0] || 'there'}</h1>
 
+        {removed && (
+          <div className="s-alert" role="alert">
+            <strong>Teacher access removed.</strong> {REMOVED_TEXT}{' '}
+            <Link to="/report?from=%2Fstudent">Report a bug</Link>
+          </div>
+        )}
+
         {error && (
           <p className="s-alert" role="alert">
             Couldn't load your assignments. Check your Wi-Fi.{' '}
@@ -57,7 +71,7 @@ export function StudentHome() {
         )}
         {!rows && !error && <p className="s-muted">Loading…</p>}
 
-        {rows && classCount === 0 && (
+        {rows && classCount === 0 && !removed && (
           <div className="s-empty">
             <h2>No classes found</h2>
             <p>

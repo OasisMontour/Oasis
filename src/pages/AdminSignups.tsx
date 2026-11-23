@@ -127,7 +127,7 @@ export function AdminSignups({
             {data.blocked.map((b) => (
               <li key={b.email} className="card row">
                 <strong>{b.email}</strong>
-                <span className="muted small grow">since {day(b.added_at)}{b.added_by ? ` by ${b.added_by}` : ''}</span>
+                <span className="muted small grow">{b.kind === 'removed' ? 'removed teacher' : 'denied sign-up'}, since {day(b.added_at)}{b.added_by ? ` by ${b.added_by}` : ''}</span>
                 <button className="small" disabled={busy} onClick={() => run('admin_unblock_teacher', { p_email: b.email }, `${b.email} unblocked. They can sign up again.`)}>
                   Unblock
                 </button>

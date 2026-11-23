@@ -54,7 +54,8 @@ export function TeacherSignup() {
       }
       const { data } = await supabase.rpc('my_teacher_request')
       const r = data as MyRequest | null
-      if (r?.blocked) setView({ kind: 'refused', reason: 'blocked' })
+      if (r?.removed) setView({ kind: 'refused', reason: 'removed' })
+      else if (r?.blocked) setView({ kind: 'refused', reason: 'blocked' })
       else if (r?.status === 'pending') setView({ kind: 'pending', reason: r.reason })
       else setView({ kind: 'start' })
     })()
@@ -103,9 +104,9 @@ export function TeacherSignup() {
 
       {view.kind === 'refused' && (
         <div className="card stack" role="alert">
-          <strong>Couldn't set up a teacher account</strong>
+          <strong>{view.reason === 'removed' ? 'Teacher access removed' : "Couldn't set up a teacher account"}</strong>
           <p>{refusedText(view.reason, profile?.email)}</p>
-          {view.reason !== 'blocked' && view.reason !== 'student_account' && (
+          {!['blocked', 'removed', 'student_account'].includes(view.reason) && (
             <p><button className="primary" onClick={start}>Try again</button></p>
           )}
         </div>

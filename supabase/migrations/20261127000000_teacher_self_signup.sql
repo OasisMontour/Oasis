@@ -44,6 +44,9 @@ revoke all on public.teacher_domains from anon, authenticated;
 
 create table public.teacher_blocks (
   email text primary key check (email = lower(email)),
+  -- removed = was a teacher and an admin took it away; denied = a sign-up an admin turned down.
+  -- Only changes what the person is told.
+  kind text not null default 'denied' check (kind in ('denied', 'removed')),
   added_by text,
   added_at timestamptz not null default now()
 );
@@ -96,7 +99,8 @@ begin
   if p.role = 'teacher' then return jsonb_build_object('status', 'granted', 'reason', 'already_teacher'); end if;
 
   if exists (select 1 from teacher_blocks where email = p.email) then
-    return jsonb_build_object('status', 'refused', 'reason', 'blocked');
+    return jsonb_build_object('status', 'refused', 'reason',
+      case when (select kind from teacher_blocks where email = p.email) = 'removed' then 'removed' else 'blocked' end);
   end if;
   n := case when jsonb_typeof(p_ev -> 'active_courses') = 'number' then least((p_ev ->> 'active_courses')::numeric, 1000)::int else 0 end;
   if n < 1 then return jsonb_build_object('status', 'refused', 'reason', 'no_courses'); end if;
@@ -162,7 +166,9 @@ language sql stable security definer set search_path = public as $$
     'status', r.status,
     'reason', r.reason,
     'requested_at', r.requested_at,
-    'blocked', exists (select 1 from teacher_blocks b join profiles p on p.email = b.email where p.id = auth.uid()))
+    'blocked', exists (select 1 from teacher_blocks b join profiles p on p.email = b.email where p.id = auth.uid()),
+    -- An admin took their teacher access away. Shown on the student page so they aren't left guessing.
+    'removed', exists (select 1 from teacher_blocks b join profiles p on p.email = b.email where p.id = auth.uid() and b.kind = 'removed'))
   from (select 1) one left join teacher_requests r on r.user_id = auth.uid();
 $$;
 revoke all on function public.my_teacher_request() from public, anon;
@@ -200,7 +206,7 @@ begin
   if p.id is null then raise exception 'no pending sign-up for that account'; end if;
   delete from teacher_requests where user_id = p.id;
   delete from google_tokens where user_id = p.id;
-  insert into teacher_blocks (email, added_by) values (p.email, me) on conflict (email) do nothing;
+  insert into teacher_blocks (email, kind, added_by) values (p.email, 'denied', me) on conflict (email) do nothing;
   insert into admin_audit (actor_email, action, target) values (me, 'deny_teacher', p.email);
   return jsonb_build_object('email', p.email);
 end $$;
@@ -291,7 +297,8 @@ begin
   demoted := found;
   if not was_listed and not demoted then raise exception '% is not a teacher', e; end if;
   delete from teacher_requests where user_id = (select id from profiles where email = e);
-  insert into teacher_blocks (email, added_by) values (e, me) on conflict (email) do nothing;
+  insert into teacher_blocks (email, kind, added_by) values (e, 'removed', me)
+    on conflict (email) do update set kind = 'removed', added_by = excluded.added_by, added_at = now();
   insert into admin_audit (actor_email, action, target, detail)
   values (me, 'remove_teacher', e, case when demoted then 'account demoted to student, blocked from signing up again' else 'had not signed in; blocked' end);
   return jsonb_build_object('email', e, 'was_listed', was_listed, 'demoted', demoted);
@@ -346,7 +353,7 @@ begin
       where r.status = 'pending'), '[]'::jsonb),
     'domains', coalesce((select jsonb_agg(jsonb_build_object('domain', domain, 'added_by', added_by, 'added_at', added_at) order by domain)
                          from teacher_domains), '[]'::jsonb),
-    'blocked', coalesce((select jsonb_agg(jsonb_build_object('email', email, 'added_by', added_by, 'added_at', added_at) order by added_at desc)
+    'blocked', coalesce((select jsonb_agg(jsonb_build_object('email', email, 'kind', kind, 'added_by', added_by, 'added_at', added_at) order by added_at desc)
                          from teacher_blocks), '[]'::jsonb),
 
     'assignments', coalesce((
