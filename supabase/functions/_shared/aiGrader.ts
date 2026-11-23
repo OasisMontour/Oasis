@@ -218,6 +218,9 @@ export async function gradeOne(item: ClaimedItem, deps: Deps, parked: Set<string
   const skip = precheck(item.response)
   if (skip) return { outcome: 'skipped', reason: skip, model: '' }
   const messages = buildMessages(item, deps.nonce())
+  // A provider that answered but whose reply we couldn't use. If nobody gives a usable verdict, this answer
+  // goes to the teacher (unsure) instead of 'unavailable': retrying would burn the same calls every click.
+  let unusable: string | null = null
   for (const p of deps.providers) {
     if (parked.has(p.name)) continue
     if (!(await deps.providerTake(p.name, p.dailyCap))) {
@@ -236,6 +239,7 @@ export async function gradeOne(item: ClaimedItem, deps: Deps, parked: Set<string
     if (!v) {
       console.warn(`ai-grade: ${p.name} returned an unusable reply`)
       await deps.providerFail(p.name, 0, 'bad output')
+      unusable ??= `${p.name}/${p.model}`
       continue
     }
     const model = `${p.name}/${p.model}`
@@ -244,6 +248,8 @@ export async function gradeOne(item: ClaimedItem, deps: Deps, parked: Set<string
       ? { outcome: 'graded', correct: d.correct, reason: v.reason, model }
       : { outcome: 'unsure', reason: v.reason || 'AI was not sure.', model }
   }
+  if (unusable) return { outcome: 'unsure', reason: "AI couldn't give a clear grade for this answer.", model: unusable }
+  // Only HTTP errors, timeouts and spent budgets get here: the answer is retried on a later run.
   return { outcome: 'unavailable' }
 }
 

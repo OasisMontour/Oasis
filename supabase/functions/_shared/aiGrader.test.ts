@@ -246,6 +246,27 @@ describe('handleAiGrade', () => {
     expect(s.records[0]).toMatchObject({ outcome: 'unsure', reason: 'Opinion question.', model: 'c/c-model' })
   })
 
+  it('sends an answer no provider can parse to the teacher instead of retrying it every click', async () => {
+    const s = setup({ responses: { a: [reply('lol')], b: [reply('{"verdict": maybe}')] } })
+    const r = await s.run()
+    expect(r.body).toMatchObject({ ok: true, unsure: 1, unavailable: 0, remaining: 0 })
+    expect(s.records[0]).toMatchObject({ outcome: 'unsure', correct: null, model: 'a/a-model' })
+    expect(s.records[0].reason).toMatch(/couldn't give a clear grade/)
+  })
+
+  it('junk from one provider plus an HTTP error from the other is still unsure, not unavailable', async () => {
+    const s = setup({ responses: { a: [reply(null, 503)], b: [reply('no json here')] } })
+    expect((await s.run()).body).toMatchObject({ unsure: 1, unavailable: 0 })
+  })
+
+  it('only HTTP errors and timeouts make an answer unavailable', async () => {
+    const abort = Object.assign(new Error('aborted'), { name: 'AbortError' })
+    const s = setup({ responses: { a: [reply(null, 500)], b: [abort] } })
+    const r = await s.run()
+    expect(r.body).toMatchObject({ unsure: 0, unavailable: 1, remaining: 1 })
+    expect(s.records[0].outcome).toBe('unavailable')
+  })
+
   it('leaves low-confidence and unsure verdicts for the teacher', async () => {
     const s = setup({ responses: { a: [reply(ok('correct', 0.6))] } })
     await s.run()
