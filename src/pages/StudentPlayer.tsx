@@ -921,15 +921,18 @@ function QuestionPanel(props: {
           <p className="p-hint">Ctrl+Enter to submit.</p>
         </>
       )}
-      {error && (
-        <p className="p-error" role="alert">
-          {error}
-        </p>
-      )}
-      <button className="s-btn primary big" onClick={() => void submit()} disabled={!response || busy}>
-        {busy ? 'Sending…' : 'Submit and keep watching'}
-      </button>
-      <p className="p-hint">You can't change your answer after you submit.</p>
+      {/* Pinned to the bottom of the panel: a long question with many choices scrolls, Submit stays visible. */}
+      <div className="p-submit">
+        {error && (
+          <p className="p-error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="s-btn primary big" onClick={() => void submit()} disabled={!response || busy}>
+          {busy ? 'Sending…' : 'Submit and keep watching'}
+        </button>
+        <p className="p-hint">You can't change your answer after you submit.</p>
+      </div>
     </aside>
   )
 }
