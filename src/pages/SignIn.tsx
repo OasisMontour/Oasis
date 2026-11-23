@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { rememberNext, takeNext } from '../lib/next'
 
 export function SignIn() {
-  const { loading, session, profile, signInWithGoogle } = useAuth()
+  const { loading, session, profile, signInWithGoogle, connectClassroom } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const from = (useLocation().state as { from?: string } | null)?.from
@@ -39,6 +39,12 @@ export function SignIn() {
         </p>
       )}
       <p className="muted small">Use your school Google account.</p>
+      <p className="small">
+        Teacher, new to Oasis?{' '}
+        <button className="link" disabled={loading} onClick={() => connectClassroom('/teacher/signup').catch((e: Error) => setError(e.message))}>
+          Sign up with Google Classroom
+        </button>
+      </p>
     </main>
   )
 }

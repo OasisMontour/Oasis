@@ -12,8 +12,13 @@ type AuthState = {
   isAdmin: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
-  /** Teacher-only: re-run Google sign-in asking for Classroom access (stored server-side for syncing). */
-  connectClassroom: () => Promise<void>
+  /**
+   * Re-run Google sign-in asking for Classroom access (stored server-side for syncing). Teachers use it to connect;
+   * anyone uses it to sign up as a teacher (returnTo = '/teacher/signup'). Students are never sent here otherwise.
+   */
+  connectClassroom: (returnTo?: string) => Promise<void>
+  /** Re-read the profile, e.g. after the server made this account a teacher. */
+  refreshProfile: () => void
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -23,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [profileVersion, setProfileVersion] = useState(0)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -41,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // The profile row is created by a database trigger on first sign-in.
-  // Role comes from the teacher allowlist, never from the browser.
+  // Role is decided in the database (allowlist, or claim_teacher_for via the classroom function), never by the browser.
   //
   // Keyed on the user id, not the session object: supabase-js hands us a new session object on every
   // token refresh (about hourly, and when a tab comes back after a while). Re-loading the profile on each
@@ -64,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, profileVersion])
 
   // Usage analytics for the admin page, once the account exists.
   const profileId = profile?.id ?? null
@@ -83,11 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }
 
-  const connectClassroom = async () => {
+  const connectClassroom = async (returnTo = '/teacher') => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/teacher?classroom=1`,
+        redirectTo: `${window.location.origin}${returnTo}?classroom=1`,
         scopes: CLASSROOM_SCOPES.join(' '),
         // offline + consent: Google only returns a refresh token on a fresh consent.
         queryParams: { access_type: 'offline', prompt: 'consent', ...(profile?.email ? { login_hint: profile.email } : {}) },
@@ -101,7 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ loading, session, profile, isAdmin, signInWithGoogle, signOut, connectClassroom }}>
+    <AuthContext.Provider
+      value={{ loading, session, profile, isAdmin, signInWithGoogle, signOut, connectClassroom, refreshProfile: () => setProfileVersion((v) => v + 1) }}
+    >
       {children}
     </AuthContext.Provider>
   )
