@@ -43,7 +43,7 @@ export type AdminAssignment = {
   focus_events: number
 }
 
-export type TeacherVia = 'allowlist' | 'verified_teacher' | 'domain' | 'admin'
+export type TeacherVia = 'allowlist' | 'verified_teacher' | 'admin'
 
 export type AdminAudit = {
   actor: string
@@ -58,7 +58,7 @@ export type AdminSignup = {
   user_id: string
   email: string
   name: string
-  reason: 'personal_account' | 'on_student_roster' | 'not_verified' | string
+  reason: 'personal_account' | 'trusted_domain' | 'on_student_roster' | 'not_verified' | string
   evidence: {
     hosted_domain: string | null
     verified_teacher: boolean
@@ -111,7 +111,6 @@ export type AdminUsage = {
 export const VIA_LABEL: Record<TeacherVia, string> = {
   allowlist: 'pre-approved by an admin',
   verified_teacher: 'verified teacher (Google)',
-  domain: 'approved school domain',
   admin: 'approved by an admin',
 }
 
@@ -120,10 +119,12 @@ export function signupReason(s: AdminSignup): string {
   switch (s.reason) {
     case 'personal_account':
       return 'Personal Google account. Anyone can make Classroom classes with one.'
+    case 'trusted_domain':
+      return `School account at a trusted school (${s.evidence.hosted_domain ?? '?'}), not verified as a teacher by Google. Probably a teacher; check the classes look real.`
     case 'on_student_roster':
       return 'Listed as a student on a Classroom roster in Oasis.'
     case 'not_verified':
-      return `School account (${s.evidence.hosted_domain ?? '?'}), not a verified teacher, domain not approved.`
+      return `School account (${s.evidence.hosted_domain ?? '?'}), not verified as a teacher by Google, school not on your trusted list.`
     default:
       return s.reason
   }

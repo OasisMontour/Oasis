@@ -67,14 +67,17 @@ select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000b1',
 select tests.ok((select role from profiles where email = 's1@district.org') = 'student', '... and stays a student');
 select tests.ok(tests.throws($$select public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', '[]')$$), 'evidence must be an object');
 
--- approved domain
+-- trusted domain: flagged for the admin, never a grant
 insert into teacher_domains (domain) values ('district.org');
-select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', false, 2)) ->> 'via' = 'domain',
-  'once the domain is approved, the same claim makes them a teacher');
+select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', false, 2)) ->> 'reason' = 'trusted_domain',
+  'trusted school domain, not verified by Google: pending (a student there could have made a throwaway class)');
+select tests.ok((select role from profiles where email = 'new.t@district.org') = 'student', '... and still a student, with no access to answer keys');
+select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', true, 2)) ->> 'via' = 'verified_teacher',
+  'the same account once Google verifies them as a teacher: in');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e5', tests.ev('rost@district.org', 'district.org', false, 1)) ->> 'reason' = 'on_student_roster',
-  'approved domain, but a Classroom roster lists them as a student: pending');
+  'trusted domain and a Classroom roster lists them as a student: pending as a student-roster flag');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e6', tests.ev('x@evil.org', 'district.org', false, 1)) ->> 'status' = 'pending',
-  'approval matches the email''s domain, not just the hosted domain');
+  'trust matches the email''s domain, not just the hosted domain');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e6', tests.ev('x@evil.org', 'evil.org', false, 1)) ->> 'reason' = 'not_verified',
   'their own Workspace domain is not an approved school: pending');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e7', tests.ev('pend@district2.org', 'district2.org', false, 1)) ->> 'status' = 'pending',
@@ -108,7 +111,7 @@ create temp table d2 as select public.admin_dashboard() as j;
 select tests.ok((select count(*) = 4 from d2, jsonb_array_elements(j -> 'signups') s), 'dashboard lists the 4 pending sign-ups');
 select tests.ok((select s #>> '{evidence,course_names,0}' = 'Period 1' from d2, jsonb_array_elements(j -> 'signups') s where s ->> 'email' = 'kid@gmail.com'),
   'sign-up shows what Google said (course names)');
-select tests.ok((select r ->> 'via' = 'domain' from d2, jsonb_array_elements(j -> 'teachers') r where r ->> 'email' = 'new.t@district.org'),
+select tests.ok((select r ->> 'via' = 'verified_teacher' from d2, jsonb_array_elements(j -> 'teachers') r where r ->> 'email' = 'new.t@district.org'),
   'teacher list says how they got in');
 select tests.ok((select r ->> 'via' = 'verified_teacher' from d2, jsonb_array_elements(j -> 'teachers') r where r ->> 'email' = 'ver@other.edu'),
   'verified teachers are labelled');
@@ -122,15 +125,15 @@ select tests.ok(public.admin_deny_teacher('00000000-0000-0000-0000-0000000000e4'
 select tests.ok(tests.throws($$select public.admin_deny_teacher('00000000-0000-0000-0000-0000000000e4')$$), 'cannot deny twice');
 select tests.ok(public.admin_approve_teacher('00000000-0000-0000-0000-0000000000e6') ->> 'email' = 'x@evil.org', 'admin approves a pending sign-up');
 select tests.ok(tests.throws($$select public.admin_approve_teacher('00000000-0000-0000-0000-0000000000b1')$$), 'cannot approve someone with no pending sign-up');
-select tests.ok(public.admin_remove_teacher('new.t@district.org') ->> 'demoted' = 'true', 'admin removes a domain-approved teacher');
+select tests.ok(public.admin_remove_teacher('new.t@district.org') ->> 'demoted' = 'true', 'admin removes a teacher');
 commit;
 
 select tests.ok((select role from profiles where email = 'x@evil.org') = 'teacher', 'approved sign-up is a teacher');
 select tests.ok(not exists (select 1 from google_tokens where user_id = '00000000-0000-0000-0000-0000000000e4'), 'deny drops their stored Classroom token');
 select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e4', tests.ev('kid@gmail.com', null, true, 3)) ->> 'reason' = 'blocked',
   'a denied account cannot sign up again');
-select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', false, 2)) ->> 'reason' = 'blocked',
-  'a removed teacher cannot walk back in through their approved domain');
+select tests.ok(public.claim_teacher_for('00000000-0000-0000-0000-0000000000e2', tests.ev('new.t@district.org', 'district.org', true, 2)) ->> 'reason' = 'blocked',
+  'a removed teacher cannot walk back in, even as a Google-verified teacher');
 select tests.ok((select role from profiles where email = 'new.t@district.org') = 'student', '... and stays a student');
 
 begin;

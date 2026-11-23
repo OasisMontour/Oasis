@@ -10,7 +10,7 @@ describe('teacherStatus', () => {
   it('pre-approved but not signed in', () => expect(teacherStatus({ ...base, role: null })).toEqual({ label: 'Pre-approved, not signed in yet', warn: false }))
   it('signed in as student is a warning', () => expect(teacherStatus({ ...base, role: 'student' }).warn).toBe(true))
   it('self-signed-up teachers off the allowlist are normal now', () =>
-    expect(teacherStatus({ ...base, on_allowlist: false, via: 'domain' })).toEqual({ label: 'Active', warn: false }))
+    expect(teacherStatus({ ...base, on_allowlist: false, via: 'verified_teacher' })).toEqual({ label: 'Active', warn: false }))
   it('no Classroom', () => expect(teacherStatus({ ...base, classroom_connected: false }).label).toBe('Classroom not connected'))
   it('no classes', () => expect(teacherStatus({ ...base, classes: 0 }).label).toBe('No classes synced'))
   it('active', () => expect(teacherStatus(base)).toEqual({ label: 'Active', warn: false }))

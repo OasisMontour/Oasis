@@ -4,27 +4,27 @@
 -- teacher", approves Classroom access, and the `classroom` Edge Function asks Google about that account and calls
 -- claim_teacher_for() with what Google said. The role is decided here, never by the browser.
 --
--- Who gets the teacher role straight away:
---   * Google says they're a verified teacher (Classroom UserProfile.verifiedTeacher: their Workspace for
---     Education admin verified them), and they teach at least one active Classroom course; or
---   * their account is managed by a school domain an Oasis admin approved (teacher_domains), they teach at least
---     one active course, and nothing says they're a student.
--- Everyone else who teaches a course waits for an admin (teacher_requests, status 'pending'). That includes
--- personal Gmail accounts: anyone can make a Classroom course with a personal Gmail in 30 seconds, so "teaches a
--- course" alone proves nothing. A teacher account can read every shared lesson's answer key, so letting a
--- student self-promote with a throwaway Gmail would be a cheating tool.
+-- Who gets the teacher role straight away: only someone Google says is a verified teacher (Classroom
+-- UserProfile.verifiedTeacher: their Workspace for Education admin verified them) who teaches at least one active
+-- Classroom course.
+-- Everyone else who teaches a course waits for an admin (teacher_requests, status 'pending'). "Teaches a course"
+-- alone proves nothing: anyone can make one with a personal Gmail in 30 seconds, and in districts that let any
+-- user create classes, a student can make one with their school account too (before their real teacher's roster
+-- syncs, nothing in Oasis says they're a student). A teacher account can read every shared lesson's answer key,
+-- so either would be a cheating tool. Trusted school domains (teacher_domains) don't grant anything; they only
+-- mark a pending sign-up as "from a school we work with" for the admin.
 --
 -- Refused outright: no active courses, a Google account that isn't the one signed in to Oasis, an account
 -- already used as a student (enrolled or has attempts), and anyone an admin blocked.
 --
 -- The old allowlist stays as an optional admin override ("pre-approve"): an allowlisted email is a teacher on
--- first sign-in without Classroom, for teachers whose district doesn't verify teachers and isn't approved.
+-- first sign-in without Classroom, for a teacher who gets stuck in the normal sign-up.
 -- Admin remove/deny now also blocks the email, otherwise a removed teacher could sign straight back up.
 
 create table public.teacher_requests (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   status text not null check (status in ('pending', 'approved')),
-  via text check (via in ('verified_teacher', 'domain', 'admin')),  -- set when approved
+  via text check (via in ('verified_teacher', 'admin')),             -- set when approved
   reason text not null default '',                                   -- why it's pending
   evidence jsonb not null default '{}',                              -- what Google said, for the admin
   requested_at timestamptz not null default now(),
@@ -127,8 +127,10 @@ begin
     -- An imported Classroom roster lists this account as a student. Only Google's own verification overrides that.
     why := 'on_student_roster';
   elsif hd is not null and exists (select 1 from teacher_domains where domain = dom) then
-    -- Matched on the email's own domain (the one the admin approved); hd only proves a school manages the account.
-    grant_via := 'domain';
+    -- A school we work with: a hint for the admin, never a grant. (Security review of #14: a student on a shared
+    -- school domain could make a throwaway class and get in before their teacher's roster synced.)
+    -- Matched on the email's own domain; hd only proves a school manages the account.
+    why := 'trusted_domain';
   elsif hd is null then
     why := 'personal_account';
   else

@@ -50,12 +50,11 @@ Teachers sign themselves up. On the sign-in page (or from the student page's "Te
 |---|---|
 | Not the account they signed in to Oasis with, no active Classroom classes, already a student in Oasis, or blocked by an admin | Refused |
 | Verified teacher (their school's Google admin marked them as a teacher) and teaches a class | Teacher right away, classes import |
-| School account on a domain you approved in /admin, teaches a class, not on any student roster | Teacher right away, classes import |
-| Anything else: personal Gmail, a school that isn't approved, listed as a student on a roster | Waits for an admin in /admin (Approve / Deny) |
+| Anything else: school account not verified by Google, personal Gmail, listed as a student on a roster | Waits for an admin in /admin (Approve / Deny) |
 
-Personal Gmail is never automatic: anyone can make a Classroom class with one in seconds, and a teacher account can read the answer key of every shared lesson.
+Only Google's own "verified teacher" flag is automatic. "Teaches a Classroom class" proves nothing on its own: anyone can make one with a personal Gmail in seconds, and in many districts students can make one with their school account too. A teacher account can read the answer key of every shared lesson, so a fake teacher is a cheating tool.
 
-**For the pilot district:** ask IT how "Who can create classes" is set (Google Admin -> Classroom -> General settings -> Teacher permissions; the menu path moves around). If it's *Verified teachers only*, students can't make classes, so approve the district's domain in /admin and every teacher gets in on their own. If it's *Anyone in your domain*, don't approve the domain (a student who makes a class would get in); approve teachers by hand from /admin instead, or ask IT to verify teachers so Google vouches for them.
+**For the pilot district:** ask IT whether they verify teachers in Google Classroom (Google Admin -> Classroom -> Teacher permissions; the menu path moves around). If they do, the 12 pilot teachers get in on their own. If they don't, each one waits for you: approve them in /admin (12 clicks). Add the district's domain under *Trusted school domains* so their sign-ups are marked as from your school; that never lets anyone in by itself.
 
 Removing a teacher in /admin (or denying a sign-up) also blocks the email from signing up again. Unblock it from /admin.
 
@@ -69,7 +68,7 @@ update profiles set role = 'teacher' where email = 'teacher@district.org';
 
 ### Admins (Oasis team)
 
-Admins get `/admin`: approve or deny teacher sign-ups, approve school domains, pre-approve, remove or unblock teachers, and a read-only overview of teachers, classes, assignments, completion and anti-cheat flags (counts only, no student names). Admins are listed in a table the app can't write to, so add them in the SQL editor with the Google account they sign in with:
+Admins get `/admin`: approve or deny teacher sign-ups, mark trusted school domains, pre-approve, remove or unblock teachers, and a read-only overview of teachers, classes, assignments, completion and anti-cheat flags (counts only, no student names). Admins are listed in a table the app can't write to, so add them in the SQL editor with the Google account they sign in with:
 
 ```sql
 insert into admins (email) values (lower('you@gmail.com'));

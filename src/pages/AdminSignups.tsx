@@ -31,7 +31,7 @@ export function AdminSignups({
     if (!looksLikeDomain(domain)) return onError('That doesn’t look like a domain (e.g. district.k12.pa.us).')
     const d = domain.trim().replace(/^@/, '').toLowerCase()
     setDomain('')
-    await run('admin_add_domain', { p_domain: d }, `${d} approved. Teachers with ${d} accounts who teach a Classroom class now get in on their own.`)
+    await run('admin_add_domain', { p_domain: d }, `${d} added. Sign-ups from ${d} accounts will be marked as from a trusted school.`)
   }
 
   return (
@@ -40,7 +40,7 @@ export function AdminSignups({
         <h2>Teacher sign-ups waiting {data.signups.length > 0 && <span className="tag warn">{data.signups.length}</span>}</h2>
         {data.signups.length === 0 && (
           <p className="muted">
-            Nobody waiting. Teachers Google verifies, or with an approved school domain, get in on their own.
+            Nobody waiting. Teachers Google verifies (their school's Google admin marked them as teachers) get in on their own.
           </p>
         )}
         {data.signups.length > 0 && (
@@ -94,11 +94,11 @@ export function AdminSignups({
 
       <section>
         <div className="section-head">
-          <h2>Approved school domains</h2>
+          <h2>Trusted school domains</h2>
           <form className="row" onSubmit={addDomain}>
             <label className="sr-only" htmlFor="new-domain">School Google domain</label>
             <input id="new-domain" className="text" placeholder="district.k12.pa.us" value={domain} onChange={(e) => setDomain(e.target.value)} required />
-            <button className="primary" disabled={busy}>Approve domain</button>
+            <button className="primary" disabled={busy}>Add domain</button>
           </form>
         </div>
         {data.domains.length === 0 && <p className="muted">None yet.</p>}
@@ -107,16 +107,16 @@ export function AdminSignups({
             <li key={d.domain} className="card row">
               <strong>{d.domain}</strong>
               <span className="muted small grow">added {day(d.added_at)}{d.added_by ? ` by ${d.added_by}` : ''}</span>
-              <button className="small danger" disabled={busy} onClick={() => run('admin_remove_domain', { p_domain: d.domain }, `${d.domain} removed. Teachers already in stay in.`)}>
+              <button className="small danger" disabled={busy} onClick={() => run('admin_remove_domain', { p_domain: d.domain }, `${d.domain} removed from trusted schools.`)}>
                 Remove
               </button>
             </li>
           ))}
         </ul>
         <p className="muted small">
-          Only approve a school's domain if its students can't create Google Classroom classes (Google Admin → Classroom → Teacher
-          permissions → "Who can create classes" = Verified teachers only). Otherwise a student who makes a class would get in.
-          Teachers Google verifies get in without this.
+          A trusted domain never lets anyone in by itself. It only marks sign-ups from schools you work with, so you can approve those
+          quickly. Students on a school domain can often make their own Classroom class, so still check the classes look real. Teachers
+          Google verifies get in without waiting.
         </p>
       </section>
 
