@@ -20,7 +20,7 @@ One-time steps to get Oasis running against a real Supabase project. About 30 mi
    - Authorized JavaScript origins: `http://localhost:5173`, your Vercel URL.
    - Authorized redirect URI: `https://YOUR_PROJECT.supabase.co/auth/v1/callback`
 3. Supabase -> Authentication -> Providers -> Google: paste the client ID and secret, enable.
-4. Supabase -> Authentication -> Providers -> **Email: turn it off.** Google is the only way in. The signup trigger trusts the account's email to decide who's a teacher, so a password signup with a teacher's address must be impossible.
+4. Supabase -> Authentication -> Providers -> **Email: turn it off.** Google is the only way in. The signup trigger trusts the account's email to decide who's a teacher, so a password signup with a teacher's address must be impossible. The database also refuses any non-Google signup as a backstop, but keep the provider off. Leave Phone and every other provider off too.
 5. Supabase -> Authentication -> URL Configuration: Site URL = your Vercel URL; add `http://localhost:5173` to redirect URLs.
 6. **District IT (do this now, it's the biggest launch risk):** students under 18 can't sign into third-party apps the district hasn't approved. Send IT the OAuth client ID and ask them to mark Oasis as *Trusted* in Google Admin -> Security -> API controls -> App access control. Test with one real student account.
 
