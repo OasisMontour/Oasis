@@ -78,7 +78,7 @@ We **never**: sell or rent personal information; use it for advertising, includi
 
 ## 5. AI grading
 
-AI grading is off unless a teacher turns it on for a lesson. When it's on, short answers can be sent to an AI provider (Cloudflare Workers AI first, then Groq or Cerebras if needed) to suggest whether the answer is correct. We send only the question, the teacher's expected answer, and the student's answer: never the student's name, email, or any ID. Answers that look like they're trying to trick the grader are not sent; the teacher grades those. We only use providers whose terms say they don't train on what we send and don't keep it. Every AI grade is labelled "AI" and the teacher can change it. The teacher is responsible for the final grade.
+AI grading is off unless a teacher turns it on for a lesson. When it's on, short answers can be sent to an AI provider (Cloudflare Workers AI first, then Groq or Cerebras if needed) to suggest whether the answer is correct. We send only the question, the teacher's expected answer, and the student's answer: never the student's name, email, or any ID. Answers that look like they're trying to trick the grader are not sent; the teacher grades those. We only use providers whose terms say they don't train on what we send and don't keep it. We store the suggested verdict, a one-line reason for the teacher, and which AI model made it. Every AI grade is labelled "AI" and the teacher can change it. The teacher is responsible for the final grade.
 
 ## 6. Google user data (Limited Use disclosure)
 

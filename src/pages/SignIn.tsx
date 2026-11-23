@@ -39,6 +39,12 @@ export function SignIn() {
         </p>
       )}
       <p className="muted small">Use your school Google account.</p>
+      <p className="small">
+        Teacher, new to Oasis?{' '}
+        <button className="link" disabled={loading} onClick={() => connectClassroom('/teacher/signup').catch((e: Error) => setError(e.message))}>
+          Sign up with Google Classroom
+        </button>
+      </p>
       <p className="muted small">
         By signing in you agree to the <Link to="/terms">Terms of Use</Link> and <Link to="/privacy">Privacy Policy</Link>.
         Students: <Link to="/student-privacy">how Oasis uses your information</Link>.

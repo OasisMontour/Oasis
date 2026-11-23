@@ -12,6 +12,7 @@ import { AssignmentResults } from './pages/AssignmentResults'
 import { AdminHome } from './pages/AdminHome'
 import { ReportBug } from './pages/ReportBug'
 import { Changelog } from './pages/Changelog'
+import { TeacherSignup } from './pages/TeacherSignup'
 import { LegalFooter } from './components/LegalFooter'
 import { LEGAL_DOCS, type LegalDocId } from './legal/docs'
 
