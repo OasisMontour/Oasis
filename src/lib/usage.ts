@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 
-// Feeds the admin page's usage numbers (supabase/migrations/20261125000100_usage.sql).
+// Feeds the admin page's usage numbers (supabase/migrations/20261126000100_usage.sql).
 // One "visit" per browser tab per user, then a heartbeat every 30s while the tab is visible.
 // The server only counts real elapsed time between beats, so nothing here needs to be trusted.
 export function startUsageTracking(userId: string): () => void {

@@ -1,4 +1,4 @@
-// Shapes returned by the admin RPCs (supabase/migrations/20261125000000_admin.sql).
+// Shapes returned by the admin RPCs (supabase/migrations/20261126000000_admin.sql).
 export type AdminTotals = {
   teachers: number
   students: number

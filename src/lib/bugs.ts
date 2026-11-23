@@ -1,4 +1,4 @@
-// Shapes returned by the bug report RPCs (supabase/migrations/20261125000300_bug_reports.sql).
+// Shapes returned by the bug report RPCs (supabase/migrations/20261126000300_bug_reports.sql).
 export type Severity = 'low' | 'medium' | 'high'
 export type BugStatus = 'open' | 'fixing' | 'fixed' | 'wont_fix'
 
