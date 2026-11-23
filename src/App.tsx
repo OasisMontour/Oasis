@@ -4,6 +4,7 @@ import { RequireRole } from './auth/RequireRole'
 import { SignIn } from './pages/SignIn'
 import { TeacherHome } from './pages/TeacherHome'
 import { StudentHome } from './pages/StudentHome'
+import { StudentPlayer } from './pages/StudentPlayer'
 import { LessonBuilder } from './pages/LessonBuilder'
 import { AssignmentResults } from './pages/AssignmentResults'
 
@@ -18,6 +19,8 @@ export default function App() {
           <Route path="/teacher/lessons/:id" element={<RequireRole role="teacher"><LessonBuilder /></RequireRole>} />
           <Route path="/teacher/assignments/:id" element={<RequireRole role="teacher"><AssignmentResults /></RequireRole>} />
           <Route path="/student" element={<RequireRole role="student"><StudentHome /></RequireRole>} />
+          {/* Google Classroom posts link here (supabase/functions/_shared/classroomHandler.ts studentAssignmentUrl). */}
+          <Route path="/student/assignments/:id" element={<RequireRole role="student"><StudentPlayer /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
