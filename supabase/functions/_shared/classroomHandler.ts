@@ -1,5 +1,8 @@
 // The `classroom` Edge Function's logic, with every outside dependency injected so it can be unit tested.
 //
+// POST { action: 'claim_teacher', refresh_token } -> any signed-in user: asks Google whether this account teaches
+//                                                  Classroom courses, lets the database decide the role
+//                                                  (claim_teacher_for), and on success stores the token and syncs
 // POST { action: 'connect', refresh_token } -> verifies + stores the teacher's Google refresh token, then syncs
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
@@ -13,7 +16,9 @@ import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
 import {
   createCoursework,
+  fetchClassroomProfile,
   fetchClassroomRosters,
+  fetchHostedDomain,
   InvalidGrantError,
   listCourseStudentIds,
   listSubmissions,
@@ -34,11 +39,29 @@ export type GradesToPush = {
   grades: { email: string; score: number; ungraded?: number }[]
 }
 
+/** What Google said about the account, passed to claim_teacher_for. The database decides; this never grants anything. */
+export type TeacherEvidence = {
+  google_email: string
+  hosted_domain: string | null
+  verified_teacher: boolean
+  can_create_courses: boolean
+  active_courses: number
+  students: number
+  course_names: string[]
+}
+
+export type ClaimResult =
+  | { status: 'granted'; via?: string; reason?: string }
+  | { status: 'pending'; reason: string }
+  | { status: 'refused'; reason: string }
+
 export type Deps = {
   fetch: typeof fetch
   env: { clientId: string; clientSecret: string; encKey: string; appOrigin: string }
   /** Resolves the caller from their Supabase JWT; null if not signed in. */
-  getCaller(authHeader: string): Promise<{ id: string; isTeacher: boolean } | null>
+  getCaller(authHeader: string): Promise<{ id: string; email: string; isTeacher: boolean } | null>
+  /** Calls claim_teacher_for with the service role. */
+  claimTeacher(userId: string, evidence: TeacherEvidence): Promise<ClaimResult>
   loadToken(userId: string): Promise<string | null>
   saveToken(userId: string, enc: string, scopes: string): Promise<void>
   deleteToken(userId: string): Promise<void>
@@ -67,13 +90,30 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
   const auth = req.headers.get('Authorization') ?? ''
   const caller = auth ? await d.getCaller(auth) : null
   if (!caller) return json({ ok: false, error: 'not signed in' }, 401)
-  if (!caller.isTeacher) return json({ ok: false, error: 'teachers only' }, 403)
 
   let body: { action?: string; refresh_token?: string; assignment_id?: string }
   try {
     body = await req.json()
   } catch {
     return json({ ok: false, error: 'bad request' }, 400)
+  }
+  if (!body || typeof body !== 'object') return json({ ok: false, error: 'bad request' }, 400)
+  // Signing up is the one thing a non-teacher can do here.
+  if (!caller.isTeacher && body.action !== 'claim_teacher') return json({ ok: false, error: 'teachers only' }, 403)
+
+  /** Fresh access token from a refresh token the browser just got from Google, with every Classroom scope. */
+  const freshAccess = async (rt: unknown): Promise<{ token: string; scopes: string[] } | { res: Response }> => {
+    if (!rt || typeof rt !== 'string' || rt.length > 2048) return { res: json({ ok: false, error: 'missing refresh token' }, 400) }
+    let token
+    try {
+      token = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, rt)
+    } catch (e) {
+      if (e instanceof InvalidGrantError) return { res: json({ ok: false, error: 'reconnect' }) }
+      throw e
+    }
+    const missing = CLASSROOM_SCOPES.filter((s) => !token.scopes.includes(s))
+    if (missing.length) return { res: json({ ok: false, error: 'missing_scopes', missing }) }
+    return { token: token.accessToken, scopes: token.scopes }
   }
 
   const sync = async (accessToken: string) => {
@@ -100,20 +140,45 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
   }
 
   try {
-    if (body.action === 'connect') {
-      const rt = body.refresh_token
-      if (!rt || typeof rt !== 'string' || rt.length > 2048) return json({ ok: false, error: 'missing refresh token' }, 400)
-      let token
-      try {
-        token = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, rt)
-      } catch (e) {
-        if (e instanceof InvalidGrantError) return json({ ok: false, error: 'reconnect' })
-        throw e
+    if (body.action === 'claim_teacher') {
+      const t = await freshAccess(body.refresh_token)
+      if ('res' in t) return t.res
+      const rt = body.refresh_token as string
+      const [profile, hd, courses] = await Promise.all([
+        fetchClassroomProfile(d.fetch, t.token),
+        fetchHostedDomain(d.fetch, t.token),
+        fetchClassroomRosters(d.fetch, t.token),
+      ])
+      const r = await d.claimTeacher(caller.id, {
+        google_email: profile.email,
+        hosted_domain: hd,
+        verified_teacher: profile.verifiedTeacher,
+        can_create_courses: profile.canCreateCourses,
+        active_courses: courses.length,
+        students: courses.reduce((n, c) => n + c.students.length, 0),
+        course_names: courses.slice(0, 5).map((c) => [c.name, c.section].filter(Boolean).join(' · ')),
+      })
+      if (r.status === 'refused') {
+        // Don't keep access we won't use. Not for wrong_account: that token is someone else's grant.
+        if (r.reason !== 'wrong_account') await revokeToken(d.fetch, rt)
+        return json({ ok: true, status: 'refused', reason: r.reason })
       }
-      const missing = CLASSROOM_SCOPES.filter((s) => !token.scopes.includes(s))
-      if (missing.length) return json({ ok: false, error: 'missing_scopes', missing })
-      await d.saveToken(caller.id, await encryptToken(rt, d.env.encKey, caller.id), token.scopes.join(' '))
-      return await sync(token.accessToken)
+      // Pending users keep an encrypted token so an admin's approval needs no second Google screen.
+      await d.saveToken(caller.id, await encryptToken(rt, d.env.encKey, caller.id), t.scopes.join(' '))
+      if (r.status === 'pending') return json({ ok: true, status: 'pending', reason: r.reason })
+      const result = await d.importClassroom(caller.id, courses)
+      await d.markUsed(caller.id)
+      return json({ ok: true, status: 'granted', via: r.via ?? null, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
+    }
+
+    if (body.action === 'connect') {
+      const t = await freshAccess(body.refresh_token)
+      if ('res' in t) return t.res
+      // Only the teacher's own Google account. Otherwise any teacher could import someone else's classes.
+      const profile = await fetchClassroomProfile(d.fetch, t.token)
+      if (profile.email !== caller.email.toLowerCase()) return json({ ok: false, error: 'wrong_account' })
+      await d.saveToken(caller.id, await encryptToken(body.refresh_token as string, d.env.encKey, caller.id), t.scopes.join(' '))
+      return await sync(t.token)
     }
 
     if (body.action === 'sync') {

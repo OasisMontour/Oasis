@@ -19,7 +19,7 @@ select tests.ok(:'r'::jsonb #>> '{assignment,class_name}' = 'Period 3 Business',
 select tests.ok((:'r'::jsonb #>> '{assignment,duration_s}')::numeric = 100, 'header has duration');
 select tests.ok(:'r'::jsonb #> '{assignment,due_at}' = 'null'::jsonb and :'r'::jsonb #> '{assignment,google_coursework_id}' = 'null'::jsonb,
   'header has due_at and google_coursework_id keys (null)');
-select tests.ok((select count(*) from jsonb_object_keys(:'r'::jsonb -> 'assignment')) = 8, 'header has exactly 8 keys');
+select tests.ok((select count(*) from jsonb_object_keys(:'r'::jsonb -> 'assignment')) = 9, 'header has exactly 9 keys');
 
 select tests.ok(jsonb_array_length(:'r'::jsonb -> 'questions') = 2, 'both questions listed');
 select tests.ok((:'r'::jsonb #>> '{questions,0,at_s}')::numeric = 10 and (:'r'::jsonb #>> '{questions,1,at_s}')::numeric = 50, 'questions ordered by time');
