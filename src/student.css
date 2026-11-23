@@ -83,6 +83,7 @@
 .p-text:focus { border-color: var(--s-water); outline: none; }
 .p-hint { margin: 0; font-size: .8125rem; color: var(--s-muted); }
 .p-error { margin: 0; color: var(--s-bad); font-weight: 700; }
+.p-submit { position: sticky; bottom: -20px; margin: auto -20px -20px; padding: 12px 20px 20px; background: #fff; display: grid; gap: 8px; border-top: 1px solid var(--s-line); }
 
 .p-bottom { padding: 12px 20px 16px; display: grid; gap: 6px; }
 .p-controls { display: flex; align-items: center; gap: 12px; }
