@@ -94,7 +94,9 @@ select tests.become('00000000-0000-0000-0000-0000000000b1');
 select tests.ok(tests.throws(format($$select save_progress(%L, 25, 25)$$, :'att1')), 'cannot save progress past an unanswered question');
 select save_progress(:'att1', 11, 11);
 select tests.ok(tests.throws(format($$select submit_answer(%L, '30000000-0000-0000-0000-000000000002', 'early')$$, :'att1')), 'cannot answer a question not reached yet');
-select tests.ok(submit_answer(:'att1', '30000000-0000-0000-0000-000000000001', '1') = true, 'correct MC answer is auto-graded right');
+select submit_answer(:'att1', '30000000-0000-0000-0000-000000000001', '1');
+select tests.ok((select count(*) from answers) = 0, 'student cannot read their graded answers back (no answer-key oracle)');
+select tests.ok(tests.throws('select score from attempts'), 'student cannot read their score');
 select tests.ok(tests.throws(format($$select submit_answer(%L, '30000000-0000-0000-0000-000000000001', '2')$$, :'att1')), 'cannot re-answer a question');
 select tests.ok(tests.throws(format($$select finish_attempt(%L)$$, :'att1')), 'cannot finish before the end of the video');
 commit;
@@ -111,8 +113,10 @@ set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');
 select tests.ok(tests.throws(format($$select save_progress(%L, 60, 60)$$, :'att1')), 'second question also gates progress');
 select save_progress(:'att1', 51, 51);
-select tests.ok(submit_answer(:'att1', '30000000-0000-0000-0000-000000000002', 'Demand is how much people want') is null, 'short answer is left ungraded');
+select submit_answer(:'att1', '30000000-0000-0000-0000-000000000002', 'Demand is how much people want');
 commit;
+select tests.ok((select is_correct from answers where attempt_id = :'att1' and question_id = '30000000-0000-0000-0000-000000000001') = true, 'correct MC answer is auto-graded right');
+select tests.ok((select is_correct from answers where attempt_id = :'att1' and question_id = '30000000-0000-0000-0000-000000000002') is null, 'short answer is left ungraded');
 
 -- wall-clock limit: right after a save, a big jump is rejected even with no questions left
 begin;
@@ -133,9 +137,10 @@ set local role authenticated;
 select tests.become('00000000-0000-0000-0000-0000000000b1');
 select save_progress(:'att1', 150, 150);
 select tests.ok((select max_watched_s from attempts where id = :'att1') = 100, 'progress is capped at the video length');
-select tests.ok(finish_attempt(:'att1') = 50, 'score counts ungraded short answer as not yet correct');
+select finish_attempt(:'att1');
 select log_focus_event(:'att1', 'tab_hidden', 42);
 commit;
+select tests.ok((select score from attempts where id = :'att1') = 50, 'score counts ungraded short answer as not yet correct');
 
 -- ---------- student 2 cannot see student 1's work
 begin;

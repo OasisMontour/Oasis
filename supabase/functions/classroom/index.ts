@@ -68,24 +68,18 @@ Deno.serve(async (req) => {
       return { id: row.id, lessonTitle: row.lessons.title, courseId: row.classes.google_course_id, dueAt: row.due_at, courseworkId: row.google_coursework_id }
     },
     async getGradesToPush(authHeader, id) {
-      const row = must(
-        await asCaller(authHeader)
-          .from('assignments')
-          .select('id, google_coursework_id, classes(google_course_id), attempts(score, finished_at, profiles(email), answers(is_correct))')
-          .eq('id', id)
-          .maybeSingle(),
-      ) as null | {
-        google_coursework_id: string | null
-        classes: { google_course_id: string }
-        attempts: { score: number | null; finished_at: string | null; profiles: { email: string } | null; answers: { is_correct: boolean | null }[] }[]
+      // Scores aren't readable over REST (students would see their own); grades_to_push checks the caller teaches the class.
+      const g = must(await asCaller(authHeader).rpc('grades_to_push', { p_assignment: id })) as null | {
+        course_id: string
+        coursework_id: string | null
+        grades: { email: string; score: number; ungraded: number }[]
       }
-      if (!row) return null
-      const grades = row.attempts.flatMap((a) =>
-        a.finished_at && a.score !== null && a.profiles?.email
-          ? [{ email: a.profiles.email, score: Number(a.score), ungraded: (a.answers ?? []).filter((x) => x.is_correct === null).length }]
-          : [],
-      )
-      return { courseId: row.classes.google_course_id, courseworkId: row.google_coursework_id, grades }
+      if (!g) return null
+      return {
+        courseId: g.course_id,
+        courseworkId: g.coursework_id,
+        grades: g.grades.map((x) => ({ email: x.email, score: Number(x.score), ungraded: Number(x.ungraded) })),
+      }
     },
     async setCourseworkId(authHeader, id, cwid) {
       must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id))
