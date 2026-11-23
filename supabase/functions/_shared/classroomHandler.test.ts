@@ -177,7 +177,7 @@ describe('push grades', () => {
   it('patches draft and assigned grade, rounded, and reports unknown students', async () => {
     const t = await ready()
     const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
-    expect(r.body).toEqual({ ok: true, pushed: 2, not_in_classroom: ['ghost@d.org'], failed: [] })
+    expect(r.body).toEqual({ ok: true, pushed: 2, not_in_classroom: ['ghost@d.org'], needs_grading: [], failed: [] })
     const byUrl = Object.fromEntries(t.patched.map((p) => [p.url, p.body]))
     const base = 'https://classroom.googleapis.com/v1/courses/gc1/courseWork/cw1/studentSubmissions'
     expect(byUrl[`${base}/sub-ann?updateMask=assignedGrade,draftGrade`]).toEqual({ assignedGrade: 90.5, draftGrade: 90.5 })
@@ -189,6 +189,15 @@ describe('push grades', () => {
     t.grades.splice(1)
     const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
     expect(r.body).toMatchObject({ pushed: 1, not_in_classroom: [] })
+    expect(t.patched).toHaveLength(1)
+  })
+
+  it('holds back students with short answers still to grade (they would count as wrong)', async () => {
+    const t = await ready()
+    t.grades[1] = { ...t.grades[1], ungraded: 1 }
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body).toMatchObject({ ok: true, pushed: 1, needs_grading: ['bob@d.org'] })
+    expect(t.patched.map((p) => p.url)).not.toContain(expect.stringContaining('sub-bob'))
     expect(t.patched).toHaveLength(1)
   })
 

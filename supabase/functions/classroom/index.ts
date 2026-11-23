@@ -71,16 +71,20 @@ Deno.serve(async (req) => {
       const row = must(
         await asCaller(authHeader)
           .from('assignments')
-          .select('id, google_coursework_id, classes(google_course_id), attempts(score, finished_at, profiles(email))')
+          .select('id, google_coursework_id, classes(google_course_id), attempts(score, finished_at, profiles(email), answers(is_correct))')
           .eq('id', id)
           .maybeSingle(),
       ) as null | {
         google_coursework_id: string | null
         classes: { google_course_id: string }
-        attempts: { score: number | null; finished_at: string | null; profiles: { email: string } | null }[]
+        attempts: { score: number | null; finished_at: string | null; profiles: { email: string } | null; answers: { is_correct: boolean | null }[] }[]
       }
       if (!row) return null
-      const grades = row.attempts.flatMap((a) => (a.finished_at && a.score !== null && a.profiles?.email ? [{ email: a.profiles.email, score: Number(a.score) }] : []))
+      const grades = row.attempts.flatMap((a) =>
+        a.finished_at && a.score !== null && a.profiles?.email
+          ? [{ email: a.profiles.email, score: Number(a.score), ungraded: (a.answers ?? []).filter((x) => x.is_correct === null).length }]
+          : [],
+      )
       return { courseId: row.classes.google_course_id, courseworkId: row.google_coursework_id, grades }
     },
     async setCourseworkId(authHeader, id, cwid) {
