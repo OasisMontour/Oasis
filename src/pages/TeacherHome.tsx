@@ -62,7 +62,10 @@ export function TeacherHome() {
       <section>
         <div className="section-head">
           <h2>Lessons</h2>
-          <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
+          <span className="row">
+            <Link className="button" to="/teacher/lessons/new?from=edpuzzle">Bring over an Edpuzzle</Link>
+            <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
+          </span>
         </div>
         {loaded && lessons.length === 0 && <p className="muted">No lessons yet. Paste a YouTube link to make your first one.</p>}
         <ul className="cards">
