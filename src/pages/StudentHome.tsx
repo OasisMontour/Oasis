@@ -1,18 +1,122 @@
+import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { listMyAssignments } from '../lib/studentApi'
+import { assignmentStatus, dueLabel, progressPct, splitAssignments, type StudentAssignmentRow } from '../lib/player'
+import { formatTime } from '../lib/time'
+import '../student.css'
 
+// Most students arrive straight from the Classroom link and never see this. It's a to-do list.
 // Classes come from the teacher's Google Classroom roster, so there's nothing to join.
-// Assignments list lands here with the student player.
 export function StudentHome() {
   const { profile, signOut } = useAuth()
+  const [rows, setRows] = useState<StudentAssignmentRow[] | null>(null)
+  const [classCount, setClassCount] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    setError(null)
+    listMyAssignments()
+      .then((r) => {
+        setRows(r.rows)
+        setClassCount(r.classCount)
+      })
+      .catch((e: Error) => setError(e.message))
+  }, [])
+  useEffect(load, [load])
+
+  const { todo, done } = splitAssignments(rows ?? [])
+
   return (
-    <main className="page">
-      <header className="bar">
+    <div className="student-home">
+      <header className="s-top">
         <strong>Oasis</strong>
-        <span className="muted">{profile?.email}</span>
-        <button onClick={signOut}>Sign out</button>
+        <span className="s-muted">{profile?.email}</span>
+        <button className="s-btn ghost" onClick={signOut}>
+          Sign out
+        </button>
       </header>
-      <h1>Hi, {profile?.name || 'there'}</h1>
-      <p className="muted">Your assignments will show up here. Your classes come from Google Classroom, so there's nothing to join.</p>
-    </main>
+      <main className="s-main">
+        <h1>Hi, {profile?.name?.split(' ')[0] || 'there'}</h1>
+
+        {error && (
+          <p className="s-alert" role="alert">
+            Couldn't load your assignments. Check your Wi-Fi.{' '}
+            <button className="s-btn" onClick={load}>
+              Try again
+            </button>
+          </p>
+        )}
+        {!rows && !error && <p className="s-muted">Loading…</p>}
+
+        {rows && classCount === 0 && (
+          <div className="s-empty">
+            <h2>No classes found</h2>
+            <p>
+              You're signed in as <b>{profile?.email}</b>. Oasis didn't find any classes for this account. If that's a personal
+              Gmail, sign out and use your school account.
+            </p>
+            <p>If it is your school account, your teacher may not have synced their Google Classroom yet. Check back later.</p>
+            <button className="s-btn primary" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        )}
+
+        {rows && classCount > 0 && (
+          <>
+            <section aria-labelledby="todo-h">
+              <h2 id="todo-h">To do</h2>
+              {todo.length === 0 ? (
+                <p className="s-muted">Nothing to do right now. New assignments show up here and in Google Classroom.</p>
+              ) : (
+                <ul className="s-list">
+                  {todo.map((a) => (
+                    <AssignmentRow key={a.id} a={a} />
+                  ))}
+                </ul>
+              )}
+            </section>
+            {done.length > 0 && (
+              <section aria-labelledby="done-h">
+                <h2 id="done-h">Done</h2>
+                <ul className="s-list">
+                  {done.map((a) => (
+                    <AssignmentRow key={a.id} a={a} />
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  )
+}
+
+function AssignmentRow({ a }: { a: StudentAssignmentRow }) {
+  const status = assignmentStatus(a)
+  const due = status === 'done' ? null : dueLabel(a.due_at)
+  const pct = progressPct(a)
+  const yt = a.lessons?.youtube_id
+  return (
+    <li>
+      <Link to={`/student/assignments/${a.id}`} className={`s-row ${status}`}>
+        {yt ? <img className="s-thumb" src={`https://i.ytimg.com/vi/${yt}/mqdefault.jpg`} alt="" loading="lazy" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} /> : <span className="s-thumb" />}
+        <span className="s-row-text">
+          <strong>{a.lessons?.title ?? 'Video lesson'}</strong>
+          <span className="s-muted">
+            {[a.classes?.name, a.lessons ? formatTime(a.lessons.duration_s) : null].filter(Boolean).join(' · ')}
+            {due && <span className={due.late ? 's-late' : ''}> · {due.text}</span>}
+          </span>
+          {status === 'in_progress' && (
+            <span className="s-progress" aria-label={`${pct}% watched`}>
+              <span style={{ width: `${pct}%` }} />
+            </span>
+          )}
+        </span>
+        <span className={`s-pill ${status}`}>{status === 'done' ? 'Done' : status === 'in_progress' ? 'Keep going' : 'Start'}</span>
+      </Link>
+    </li>
   )
 }

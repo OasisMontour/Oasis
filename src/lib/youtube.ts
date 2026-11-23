@@ -25,15 +25,26 @@ export type YTPlayer = {
   getCurrentTime(): number
   seekTo(seconds: number, allowSeekAhead: boolean): void
   pauseVideo(): void
+  playVideo(): void
+  getPlaybackRate(): number
+  setPlaybackRate(rate: number): void
   destroy(): void
 }
+
+/** YT.PlayerState values we care about. */
+export const YT_STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3 } as const
 type YTNamespace = {
   Player: new (
     el: HTMLElement,
     opts: {
       videoId: string
       playerVars?: Record<string, number | string>
-      events?: { onReady?: () => void; onError?: (e: { data: number }) => void }
+      events?: {
+        onReady?: () => void
+        onError?: (e: { data: number }) => void
+        onStateChange?: (e: { data: number }) => void
+        onPlaybackRateChange?: (e: { data: number }) => void
+      }
     },
   ) => YTPlayer
 }
