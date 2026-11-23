@@ -7,6 +7,8 @@ export type DraftQuestion = {
   prompt: string
   choices: string[] // empty for short answer
   correct_index: number | null
+  /** Short answers only: what the teacher expects. Used by AI grading, never shown to students. */
+  rubric?: string
 }
 
 export type ParseResult = { questions: DraftQuestion[]; errors: string[] }

@@ -1,12 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { handleClassroom, type Deps } from './classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type Deps, type TeacherEvidence } from './classroomHandler.ts'
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
 
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)))
 
-function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; failGradeFor?: string[] } = {}) {
+function setup(
+  opts: {
+    teacher?: boolean
+    scopes?: string[]
+    revoked?: boolean
+    failGradeFor?: string[]
+    googleEmail?: string
+    hd?: string | null
+    verified?: boolean
+    claim?: ClaimResult
+  } = {},
+) {
+  const claims: TeacherEvidence[] = []
+  const revoked: string[] = []
   const store = new Map<string, string>()
   const calls: string[] = []
   const imported: unknown[] = []
@@ -27,7 +40,10 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; 
       if (opts.revoked || rt !== 'good-refresh') return Response.json({ error: 'invalid_grant' }, { status: 400 })
       return Response.json({ access_token: 'acc', scope: (opts.scopes ?? CLASSROOM_SCOPES).join(' ') })
     }
-    if (url.startsWith('https://oauth2.googleapis.com/revoke')) return new Response('')
+    if (url.startsWith('https://oauth2.googleapis.com/revoke')) {
+      revoked.push(String(new URLSearchParams(String(init?.body)).get('token')))
+      return new Response('')
+    }
     if ((init?.headers as Record<string, string>)?.Authorization !== 'Bearer acc') return new Response('', { status: 401 })
     if (url.includes('/courseWork') && init?.method === 'POST') {
       posted.push({ url, body: JSON.parse(String(init.body)) })
@@ -38,6 +54,9 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; 
       patched.push({ url, body: JSON.parse(String(init.body)) })
       return Response.json({})
     }
+    if (url.endsWith('/userProfiles/me'))
+      return Response.json({ emailAddress: opts.googleEmail ?? 'T@d.org', verifiedTeacher: opts.verified ?? false, permissions: [{ permission: 'CREATE_COURSE' }] })
+    if (url.startsWith('https://openidconnect.googleapis.com/v1/userinfo')) return Response.json(opts.hd === null ? { email: 'x' } : { email: 'x', hd: opts.hd ?? 'd.org' })
     if (url.includes('/studentSubmissions')) return Response.json({ studentSubmissions: [{ id: 'sub-ann', userId: 'u-ann' }, { id: 'sub-bob', userId: 'u-bob' }] })
     if (url.includes('/students')) return Response.json({ students: roster })
     if (url.includes('/courses')) return Response.json({ courses: [{ id: 'gc1', name: 'Bio', section: 'P2' }] })
@@ -46,7 +65,11 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; 
   const deps: Deps = {
     fetch: fakeFetch,
     env: { clientId: 'cid', clientSecret: 'sec', encKey: KEY, appOrigin: 'https://oasis.test/' },
-    getCaller: async (h) => (h === 'Bearer jwt' ? { id: 'teacher-1', isTeacher: opts.teacher ?? true } : null),
+    getCaller: async (h) => (h === 'Bearer jwt' ? { id: 'teacher-1', email: 't@d.org', isTeacher: opts.teacher ?? true } : null),
+    claimTeacher: async (_u, ev) => {
+      claims.push(ev)
+      return opts.claim ?? { status: 'granted', via: 'verified_teacher' }
+    },
     loadToken: async (u) => store.get(u) ?? null,
     saveToken: async (u, enc) => void store.set(u, enc),
     deleteToken: async (u) => void store.delete(u),
@@ -64,7 +87,7 @@ function setup(opts: { teacher?: boolean; scopes?: string[]; revoked?: boolean; 
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { setRoster: (r: unknown[]) => void (roster = r), store, calls, imported, posted, patched, grades, asg, call }
+  return { claims, revoked, setRoster: (r: unknown[]) => void (roster = r), store, calls, imported, posted, patched, grades, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -117,6 +140,65 @@ describe('classroom edge function', () => {
     expect((await setup().call({ action: 'sync' }, '')).status).toBe(401)
     expect((await setup().call({ action: 'sync' }, 'Bearer forged')).status).toBe(401)
     expect((await setup({ teacher: false }).call({ action: 'sync' })).status).toBe(403)
+    expect((await setup({ teacher: false }).call({ action: 'connect', refresh_token: 'good-refresh' })).status).toBe(403)
+    expect((await setup({ teacher: false }).call({ action: 'post', assignment_id: 'as1' })).status).toBe(403)
+    expect((await setup().call(null)).status).toBe(400)
+  })
+
+  it('connect refuses a different Google account than the signed-in teacher', async () => {
+    const t = setup({ googleEmail: 'someone.else@d.org' })
+    const r = await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    expect(r.body).toEqual({ ok: false, error: 'wrong_account' })
+    expect(t.store.size).toBe(0)
+    expect(t.imported).toEqual([])
+  })
+})
+
+describe('teacher sign-up (claim_teacher)', () => {
+  it('a student can claim; Google evidence goes to the database, and on a grant the token is stored and classes import', async () => {
+    const t = setup({ teacher: false, verified: true, hd: 'D.org' })
+    const r = await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })
+    expect(r.body).toMatchObject({ ok: true, status: 'granted', via: 'verified_teacher', courses: 1, students: 1, created: 1 })
+    expect(t.claims).toEqual([
+      { google_email: 't@d.org', hosted_domain: 'd.org', verified_teacher: true, can_create_courses: true, active_courses: 1, students: 1, course_names: ['Bio · P2'] },
+    ])
+    expect(await decryptToken(t.store.get('teacher-1')!, KEY, 'teacher-1')).toBe('good-refresh')
+    expect(t.imported).toHaveLength(1)
+  })
+
+  it('pending: stores the token for later, imports nothing', async () => {
+    const t = setup({ teacher: false, hd: null, claim: { status: 'pending', reason: 'personal_account' } })
+    const r = await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })
+    expect(r.body).toEqual({ ok: true, status: 'pending', reason: 'personal_account' })
+    expect(t.claims[0].hosted_domain).toBeNull()
+    expect(t.store.has('teacher-1')).toBe(true)
+    expect(t.imported).toEqual([])
+  })
+
+  it('refused: stores nothing, imports nothing, revokes our access', async () => {
+    const t = setup({ teacher: false, claim: { status: 'refused', reason: 'no_courses' } })
+    const r = await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })
+    expect(r.body).toEqual({ ok: true, status: 'refused', reason: 'no_courses' })
+    expect(t.store.size).toBe(0)
+    expect(t.imported).toEqual([])
+    expect(t.revoked).toEqual(['good-refresh'])
+  })
+
+  it("wrong account: refused without revoking someone else's grant", async () => {
+    const t = setup({ teacher: false, googleEmail: 'other@d.org', claim: { status: 'refused', reason: 'wrong_account' } })
+    const r = await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })
+    expect(r.body.reason).toBe('wrong_account')
+    expect(t.claims[0].google_email).toBe('other@d.org') // passed through; the database compares it to the account
+    expect(t.revoked).toEqual([])
+    expect(t.store.size).toBe(0)
+  })
+
+  it('needs a valid token with every Classroom scope before asking anything', async () => {
+    const t = setup({ teacher: false, scopes: CLASSROOM_SCOPES.slice(0, 2) })
+    expect((await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })).body.error).toBe('missing_scopes')
+    expect((await t.call({ action: 'claim_teacher', refresh_token: 'stolen' })).body.error).toBe('reconnect')
+    expect((await t.call({ action: 'claim_teacher' })).status).toBe(400)
+    expect(t.claims).toEqual([])
   })
 })
 

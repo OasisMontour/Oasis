@@ -43,6 +43,8 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
         if (data.error === 'reconnect' || data.error === 'not_connected') {
           setStatus((s) => ({ last_synced_at: s?.last_synced_at ?? null, connected: false }))
           setMessage({ kind: 'error', text: 'Google Classroom needs to be reconnected. Click Connect Google Classroom.' })
+        } else if (data.error === 'wrong_account') {
+          setMessage({ kind: 'error', text: `That was a different Google account. Click Connect again and pick ${profile?.email ?? 'the account you signed in with'}.` })
         } else if (data.error === 'missing_scopes') {
           setMessage({ kind: 'error', text: 'Google Classroom access was only partly approved. Click Connect again and tick every box on the Google screen.' })
         } else setMessage({ kind: 'error', text: `Google Classroom sync failed: ${data.error}` })
@@ -61,7 +63,7 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
       if (!quiet || data.created || data.newly_enrolled || data.removed || data.skipped.length) setMessage({ kind: 'ok', text })
       onImported()
     },
-    [onImported],
+    [onImported, profile?.email],
   )
 
   // On load: finish a fresh connection, or auto-sync if it's been a while.
@@ -93,7 +95,7 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
     connected: status?.connected ?? null,
     busy,
     message,
-    connect: connectClassroom,
+    connect: () => connectClassroom(),
     syncNow: () => call({ action: 'sync' }),
     disconnect: () => call({ action: 'disconnect' }),
   }

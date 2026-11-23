@@ -9,12 +9,17 @@ export type ResultQuestion = {
   prompt: string
   choices: string[] | null
   correct_index: number | null
+  /** Short answers: what the teacher expects (used by AI grading). Never sent to students. */
+  rubric?: string
 }
 
 export type ResultAnswer = {
   response: string
   is_correct: boolean | null
   graded_by: 'auto' | 'teacher' | 'ai' | null
+  /** AI has looked at it (graded it, or left it for the teacher). */
+  ai_checked?: boolean
+  ai_reason?: string | null
 }
 
 export type ResultStudent = {
@@ -43,6 +48,7 @@ export type AssignmentResults = {
     class_name: string
     duration_s: number
     google_coursework_id: string | null
+    ai_grade_short?: boolean
   }
   questions: ResultQuestion[]
   students: ResultStudent[]
@@ -90,6 +96,20 @@ export type Summary = {
 
 export function needsGrading(student: ResultStudent, questions: ResultQuestion[]): number {
   return questions.filter((q) => q.kind === 'short' && student.answers[q.id] && student.answers[q.id].is_correct === null).length
+}
+
+/** Short answers AI could still look at: ungraded and not checked by AI yet. */
+export function aiPending(students: ResultStudent[], questions: ResultQuestion[]): number {
+  const short = new Set(questions.filter((q) => q.kind === 'short').map((q) => q.id))
+  let n = 0
+  for (const st of students)
+    for (const [qid, a] of Object.entries(st.answers)) if (short.has(qid) && a.is_correct === null && !a.ai_checked) n++
+  return n
+}
+
+/** Grades AI wrote that the teacher hasn't confirmed or changed. */
+export function aiToReview(student: ResultStudent): number {
+  return Object.values(student.answers).filter((a) => a.graded_by === 'ai').length
 }
 
 export function summarize(students: ResultStudent[], questions: ResultQuestion[]): Summary {
@@ -185,7 +205,8 @@ function answerCell(q: ResultQuestion, a: ResultAnswer | undefined): string {
     text = c !== null ? `${choiceLetter(c)}. ${q.choices?.[c] ?? ''}`.trim() : a.response
   }
   const mark = a.is_correct === null ? 'needs grading' : a.is_correct ? 'correct' : 'incorrect'
-  return `${text} (${mark})`
+  const by = a.graded_by === 'ai' ? ', by AI' : ''
+  return `${text} (${mark}${by})`
 }
 
 export function buildCsv(data: Pick<AssignmentResults, 'questions' | 'students'>): string {

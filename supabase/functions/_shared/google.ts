@@ -28,6 +28,38 @@ export async function revokeToken(f: typeof fetch, token: string): Promise<void>
   }).catch(() => undefined) // best effort: we delete our copy either way
 }
 
+/** Who the Classroom token belongs to, and whether their school's Google admin verified them as a teacher. */
+export async function fetchClassroomProfile(
+  f: typeof fetch,
+  token: string,
+): Promise<{ email: string; verifiedTeacher: boolean; canCreateCourses: boolean }> {
+  const res = await f('https://classroom.googleapis.com/v1/userProfiles/me', { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`Google Classroom returned ${res.status} for userProfiles/me`)
+  const p = (await res.json()) as { emailAddress?: string; verifiedTeacher?: boolean; permissions?: { permission?: string }[] }
+  if (!p.emailAddress) throw new Error('Google Classroom did not return an email for this account')
+  return {
+    email: p.emailAddress.toLowerCase(),
+    // Google: "always false if the user is not a member of a Google Workspace for Education domain".
+    verifiedTeacher: p.verifiedTeacher === true,
+    canCreateCourses: (p.permissions ?? []).some((x) => x.permission === 'CREATE_COURSE'),
+  }
+}
+
+/**
+ * The account's Workspace domain (OpenID `hd`), or null for a personal Google account. Uses the `email` scope
+ * Supabase always asks for. If the call fails we return null, which only ever makes the account look *less* trusted.
+ */
+export async function fetchHostedDomain(f: typeof fetch, token: string): Promise<string | null> {
+  try {
+    const res = await f('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) return null
+    const u = (await res.json()) as { hd?: string }
+    return typeof u.hd === 'string' && u.hd ? u.hd.toLowerCase() : null
+  } catch {
+    return null
+  }
+}
+
 export type ImportCourse = { id: string; name: string; section: string; students: { email: string; name: string }[] }
 
 const API = 'https://classroom.googleapis.com/v1'

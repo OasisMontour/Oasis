@@ -42,7 +42,7 @@ export function LessonBuilder() {
     ;(async () => {
       const { data, error } = await supabase
         .from('lessons')
-        .select('id, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position)')
+        .select('id, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
         .eq('id', id)
         .single()
       setLoading(false)
@@ -222,6 +222,7 @@ export function LessonBuilder() {
           prompt: q.prompt.trim(),
           choices: q.kind === 'mc' ? q.choices.map((c) => c.trim()) : null,
           correct_index: q.kind === 'mc' ? q.correct_index : null,
+          rubric: q.kind === 'short' ? (q.rubric ?? '').trim() : '',
         })),
     })
     setSaving(false)
@@ -232,7 +233,7 @@ export function LessonBuilder() {
       // reload so new questions pick up their ids
       const { data: qs } = await supabase
         .from('questions')
-        .select('id, at_s, kind, prompt, choices, correct_index')
+        .select('id, at_s, kind, prompt, choices, correct_index, rubric')
         .eq('lesson_id', id)
         .order('at_s')
         .order('position')
@@ -365,6 +366,13 @@ export function LessonBuilder() {
                 <button className="small danger" onClick={() => remove(q.key)}>Delete</button>
               </div>
               <textarea aria-label="Question" rows={2} value={q.prompt} maxLength={2000} onChange={(e) => update(q.key, { prompt: e.target.value })} placeholder="Type the question" />
+              {q.kind === 'short' && (
+                <label className="small">
+                  Expected answer <span className="muted">(optional, students never see it{aiGrade ? '; AI grades against it' : ''})</span>
+                  <textarea rows={2} maxLength={1000} value={q.rubric ?? ''} onChange={(e) => update(q.key, { rubric: e.target.value })}
+                    placeholder="e.g. Mitochondria make energy (ATP) for the cell. Accept any answer that mentions energy." />
+                </label>
+              )}
               {q.kind === 'mc' && (
                 <div className="stack">
                   {q.choices.map((c, ci) => (
