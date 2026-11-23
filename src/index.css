@@ -93,3 +93,7 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .tag.ok-tag { background: #e6f4ea; border-color: #9fd3ae; color: var(--ok); }
 .card.bug.sev-high { border-left: 4px solid var(--danger); }
 .bug-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* admin tables: the second column (status notes, emails) wraps so it can't push the counts off screen */
+.admin .results-table td:nth-child(2) { white-space: normal; min-width: 10em; max-width: 13em; }
+.admin .results-table .tag { white-space: nowrap; }

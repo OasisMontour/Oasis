@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { AdminAssignments } from './AdminAssignments'
 import { supabase } from '../lib/supabase'
 import { looksLikeEmail, teacherStatus, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
 import { formatDuration } from '../lib/duration'
 import { AdminBugs } from './AdminBugs'
 
+// "Nov 23, 7 AM": enough to spot a stale sync or a teacher who's gone quiet, and keeps the table narrow.
+const whenShort = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' }) : '–')
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–')
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
 
 // Admin page for the Oasis team. Read-only overview plus the teacher allowlist.
 // Students are minors: the server only ever sends counts for them, never names or emails.
@@ -47,8 +49,6 @@ export function AdminHome() {
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="ok" role="status">{notice}</p>}
 
-      <AdminBugs onError={reportError} />
-
       {usage && <Usage usage={usage} />}
 
       {t && (
@@ -77,55 +77,9 @@ export function AdminHome() {
         }}
       />
 
-      <section>
-        <h2>Assignments</h2>
-        {data && data.assignments.length === 0 && <p className="muted">No assignments yet.</p>}
-        {data && data.assignments.length > 0 && (
-          <div className="table-wrap">
-            <table className="results-table">
-              <thead>
-                <tr>
-                  <th>Assigned</th>
-                  <th>Teacher</th>
-                  <th>Class</th>
-                  <th>Lesson</th>
-                  <th>Started</th>
-                  <th>Finished</th>
-                  <th>Avg score</th>
-                  <th>Flagged</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.assignments.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      {day(a.created_at)}
-                      {a.due_at && <div className="muted small">due {day(a.due_at)}</div>}
-                    </td>
-                    <td>{a.teacher}</td>
-                    <td>{a.class}</td>
-                    <td>
-                      {a.lesson}
-                      {!a.posted_to_classroom && <div className="muted small">not posted to Classroom</div>}
-                    </td>
-                    <td>{a.started} / {a.students}</td>
-                    <td>{a.finished} / {a.students}</td>
-                    <td>{a.avg_score ?? '–'}</td>
-                    <td>
-                      {a.flagged > 0 ? (
-                        <span className="tag warn" title={`${a.focus_events} times away from the video`}>{a.flagged} students</span>
-                      ) : (
-                        <span className="muted">0</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="muted small">Newest 200. Student-level results stay on each teacher's results page.</p>
-      </section>
+      <AdminBugs onError={reportError} />
+
+      <AdminAssignments assignments={data?.assignments ?? null} />
 
       <section>
         <h2>Allowlist changes</h2>
@@ -307,7 +261,6 @@ function Teachers({
                 <th>Teacher</th>
                 <th>Status</th>
                 <th>Last seen</th>
-                <th>Time, 7 days</th>
                 <th>Classroom sync</th>
                 <th>Classes</th>
                 <th>Students</th>
@@ -330,9 +283,11 @@ function Teachers({
                       <span className={s.warn ? 'tag warn' : 'tag'}>{s.label}</span>
                       {t.added_by && <div className="muted small">added by {t.added_by}</div>}
                     </td>
-                    <td>{when(u?.last_seen ?? null)}</td>
-                    <td>{u ? formatDuration(u.active_s_7d) : '–'}</td>
-                    <td>{when(t.last_synced_at)}</td>
+                    <td>
+                      {whenShort(u?.last_seen ?? null)}
+                      {u && <div className="muted small">{formatDuration(u.active_s_7d)} past 7 days</div>}
+                    </td>
+                    <td>{whenShort(t.last_synced_at)}</td>
                     <td>{t.classes}</td>
                     <td>{t.students}</td>
                     <td>{t.lessons}</td>
