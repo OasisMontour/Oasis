@@ -69,12 +69,13 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .missed-note { color: var(--danger); margin: 0; }
 
 /* admin (plain on purpose) */
+.page.admin { max-width: 1200px; }
 .admin .stats { margin-top: 20px; }
 .table-wrap { overflow-x: auto; }
 .admin .results-table td { white-space: nowrap; }
 .dau { margin: 16px 0 0; background: var(--surface); border: 1px solid #dde4e2; border-radius: 10px; padding: 12px 14px; }
 .dau figcaption { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid #dde4e2; }
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin-top: 52px; border-bottom: 1px solid #dde4e2; }
 .bar-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; outline: none; }
 .bar-col .bar { display: block; width: 100%; min-height: 0; background: var(--accent); border-radius: 4px 4px 0 0; }
 .bar-col:hover .bar, .bar-col:focus-visible .bar { background: color-mix(in srgb, var(--accent) 75%, #000); }

@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { looksLikeEmail, teacherStatus, type AdminDashboard, type AdminTeacher, type AdminUsage } from '../lib/admin'
 import { formatDuration } from '../lib/duration'
 
-const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '–')
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–')
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '–')
 
 // Admin page for the Oasis team. Read-only overview plus the teacher allowlist.
@@ -299,8 +299,8 @@ function Teachers({
                 <th>Teacher</th>
                 <th>Status</th>
                 <th>Last seen</th>
-                <th>Time in app (7 days)</th>
-                <th>Last Classroom sync</th>
+                <th>Time, 7 days</th>
+                <th>Classroom sync</th>
                 <th>Classes</th>
                 <th>Students</th>
                 <th>Lessons</th>
