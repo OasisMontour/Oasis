@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
+import { startUsageTracking } from '../lib/usage'
 import { CLASSROOM_SCOPES } from '../../supabase/functions/_shared/scopes.ts'
 
 type AuthState = {
@@ -64,6 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [userId])
+
+  // Usage analytics for the admin page, once the account exists.
+  const profileId = profile?.id ?? null
+  useEffect(() => (profileId ? startUsageTracking(profileId) : undefined), [profileId])
 
   const signInWithGoogle = async () => {
     const hd = import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN as string | undefined

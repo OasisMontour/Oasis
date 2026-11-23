@@ -63,3 +63,18 @@ export function teacherStatus(t: AdminTeacher): { label: string; warn: boolean }
 export function looksLikeEmail(s: string) {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim())
 }
+
+export type UsageDay = { day: string; students: number; teachers: number; visits: number; active_s: number }
+export type AdminUsage = {
+  active: {
+    today_students: number; today_teachers: number
+    week_students: number; week_teachers: number
+    month_students: number; month_teachers: number
+    visits_30d: number; visits_total: number
+    active_s_30d: number; active_s_total: number
+  }
+  students_week: { avg_active_s: number; median_active_s: number }
+  video: { watched_s_total: number; answers_total: number }
+  daily: UsageDay[]
+  teachers: { email: string; visits: number; active_s_7d: number; active_s_total: number; last_seen: string | null }[]
+}

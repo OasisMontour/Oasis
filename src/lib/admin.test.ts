@@ -23,3 +23,14 @@ describe('looksLikeEmail', () => {
     expect(looksLikeEmail('a b@c.d')).toBe(false)
   })
 })
+
+import { formatDuration } from './duration'
+describe('formatDuration', () => {
+  it('formats', () => {
+    expect(formatDuration(0)).toBe('0m')
+    expect(formatDuration(20)).toBe('1m')
+    expect(formatDuration(59 * 60)).toBe('59m')
+    expect(formatDuration(5400)).toBe('1h 30m')
+    expect(formatDuration(7200)).toBe('2h')
+  })
+})
