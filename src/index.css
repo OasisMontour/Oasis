@@ -67,3 +67,29 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .dist li { display: grid; grid-template-columns: minmax(10em, 1fr) 2fr 2em; gap: 8px; align-items: center; }
 .dist li .meter { margin: 0; height: 10px; } .dist li.right .meter > span { background: var(--ok); }
 .missed-note { color: var(--danger); margin: 0; }
+
+/* admin (plain on purpose) */
+.page.admin { max-width: 1200px; }
+.admin .stats { margin-top: 20px; }
+.table-wrap { overflow-x: auto; }
+.admin .results-table td { white-space: nowrap; }
+.dau { margin: 16px 0 0; background: var(--surface); border: 1px solid #dde4e2; border-radius: 10px; padding: 12px 14px; }
+.dau figcaption { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin-top: 52px; border-bottom: 1px solid #dde4e2; }
+.bar-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; outline: none; }
+.bar-col .bar { display: block; width: 100%; min-height: 0; background: var(--accent); border-radius: 4px 4px 0 0; }
+.bar-col:hover .bar, .bar-col:focus-visible .bar { background: color-mix(in srgb, var(--accent) 75%, #000); }
+.bar-col .tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+  background: var(--ink); color: #fff; font-size: .8rem; padding: 6px 8px; border-radius: 6px; z-index: 2; pointer-events: none; }
+.bar-col:hover .tip, .bar-col:focus-visible .tip { display: block; }
+.bar-col:first-child .tip { left: 0; transform: none; } .bar-col:last-child .tip { left: auto; right: 0; transform: none; }
+.bars-axis { display: flex; justify-content: space-between; margin-top: 4px; }
+.dau table { margin-top: 10px; }
+
+/* bug reports */
+.page.narrow { max-width: 680px; }
+.tag.sev.high { background: #fde8e6; border-color: #e8a29b; color: var(--danger); }
+.tag.sev.medium { background: #fff4e0; border-color: #e8b860; }
+.tag.ok-tag { background: #e6f4ea; border-color: #9fd3ae; color: var(--ok); }
+.card.bug.sev-high { border-left: 4px solid var(--danger); }
+.bug-text { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -101,3 +101,4 @@
 @media (max-width: 860px) {
   .p-body.with-panel { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 40%) 1fr; }
 }
+.p-top .small-link { font-size: .8rem; white-space: nowrap; }

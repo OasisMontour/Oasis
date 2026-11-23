@@ -50,6 +50,17 @@ insert into teacher_allowlist (email) values ('teacher@district.org');
 update profiles set role = 'teacher' where email = 'teacher@district.org';
 ```
 
+### Admins (Oasis team)
+
+Admins get `/admin`: add or remove teachers, and a read-only overview of teachers, classes, assignments, completion and anti-cheat flags (counts only, no student names). Admins are listed in a table the app can't write to, so add them in the SQL editor with the Google account they sign in with:
+
+```sql
+insert into admins (email) values (lower('you@gmail.com'));
+-- revoke: delete from admins where email = 'you@gmail.com';  (takes effect on their next click)
+```
+
+An admin can also be a teacher or a student; the Admin link shows up in their header either way.
+
 ## 4. Vercel
 
 Import the repo, framework preset Vite, add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and optionally `VITE_GOOGLE_HOSTED_DOMAIN` (the district's Google domain). `vercel.json` handles client-side routes.

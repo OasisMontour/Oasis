@@ -9,7 +9,7 @@ import '../student.css'
 // Most students arrive straight from the Classroom link and never see this. It's a to-do list.
 // Classes come from the teacher's Google Classroom roster, so there's nothing to join.
 export function StudentHome() {
-  const { profile, signOut } = useAuth()
+  const { profile, isAdmin, signOut } = useAuth()
   const [rows, setRows] = useState<StudentAssignmentRow[] | null>(null)
   const [classCount, setClassCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +32,14 @@ export function StudentHome() {
       <header className="s-top">
         <strong>Oasis</strong>
         <span className="s-muted">{profile?.email}</span>
+        <Link className="s-btn ghost" to="/report?from=%2Fstudent">
+          Report a bug
+        </Link>
+        {isAdmin && (
+          <Link className="s-btn ghost" to="/admin">
+            Admin
+          </Link>
+        )}
         <button className="s-btn ghost" onClick={signOut}>
           Sign out
         </button>

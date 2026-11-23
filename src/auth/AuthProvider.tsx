@@ -1,12 +1,15 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
+import { startUsageTracking } from '../lib/usage'
 import { CLASSROOM_SCOPES } from '../../supabase/functions/_shared/scopes.ts'
 
 type AuthState = {
   loading: boolean
   session: Session | null
   profile: Profile | null
+  /** UI hint only (shows the Admin link). Every admin RPC re-checks on the server. */
+  isAdmin: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
   /** Teacher-only: re-run Google sign-in asking for Classroom access (stored server-side for syncing). */
@@ -18,6 +21,7 @@ const AuthContext = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -29,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(s)
       if (!s) {
         setProfile(null)
+        setIsAdmin(false)
         setLoading(false)
       }
     })
@@ -46,21 +51,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId) return
     let cancelled = false
     setLoading(true)
-    supabase
-      .from('profiles')
-      .select('id, role, name, email')
-      .eq('id', userId)
-      .single()
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error) console.error('Could not load profile', error)
-        setProfile((data as Profile) ?? null)
-        setLoading(false)
-      })
+    Promise.all([
+      supabase.from('profiles').select('id, role, name, email').eq('id', userId).single(),
+      supabase.rpc('is_admin'),
+    ]).then(([p, a]) => {
+      if (cancelled) return
+      if (p.error) console.error('Could not load profile', p.error)
+      setProfile((p.data as Profile) ?? null)
+      setIsAdmin(a.data === true)
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }
   }, [userId])
+
+  // Usage analytics for the admin page, once the account exists.
+  const profileId = profile?.id ?? null
+  useEffect(() => (profileId ? startUsageTracking(profileId) : undefined), [profileId])
 
   const signInWithGoogle = async () => {
     const hd = import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN as string | undefined
@@ -93,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ loading, session, profile, signInWithGoogle, signOut, connectClassroom }}>
+    <AuthContext.Provider value={{ loading, session, profile, isAdmin, signInWithGoogle, signOut, connectClassroom }}>
       {children}
     </AuthContext.Provider>
   )

@@ -13,3 +13,13 @@ export function RequireRole({ role, children }: { role: Role; children: ReactNod
   if (profile.role !== role) return <Navigate to={profile.role === 'teacher' ? '/teacher' : '/student'} replace />
   return <>{children}</>
 }
+
+// Any signed-in user, whatever their role (bug reports, changelog).
+export function RequireSignedIn({ children }: { children: ReactNode }) {
+  const { loading, session, profile } = useAuth()
+  const location = useLocation()
+  if (loading) return <p className="muted center">Loading…</p>
+  if (!session) return <Navigate to="/" replace state={{ from: location.pathname + location.search }} />
+  if (!profile) return <p className="muted center">Setting up your account… refresh in a moment.</p>
+  return <>{children}</>
+}
