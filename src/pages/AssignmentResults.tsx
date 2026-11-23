@@ -124,7 +124,7 @@ export function AssignmentResults() {
     setNotice(null)
     setInfo(null)
     const { data: res, error: err } = await supabase.functions.invoke<
-      | { ok: true; pushed: number; not_in_classroom: string[]; failed: { email: string; error: string }[] }
+      | { ok: true; pushed: number; not_in_classroom: string[]; needs_grading?: string[]; failed: { email: string; error: string }[] }
       | { ok: false; error: string }
     >('classroom', { body: { action: 'push_grades', assignment_id: id } })
     setSending(false)
@@ -138,6 +138,8 @@ export function AssignmentResults() {
     let text = `Sent ${res.pushed} grade${res.pushed === 1 ? '' : 's'} to Google Classroom.`
     const m = res.not_in_classroom.length
     if (m) text += ` ${m} student${m === 1 ? " isn't" : "s aren't"} in the Classroom course.`
+    const g = res.needs_grading?.length ?? 0
+    if (g) text += ` Held back ${g} student${g === 1 ? '' : 's'} with short answers still to grade. Grade them here, then send again.`
     const f = res.failed.length
     if (f) text += ` ${f} failed: ${res.failed.map((x) => x.email).join(', ')}.`
     text += ' Press Return in Classroom for students to see their grades.'
@@ -300,7 +302,7 @@ export function AssignmentResults() {
                               {right && <span className="sr-only"> (correct answer)</span>}
                               {right && <span className="ok small" aria-hidden="true"> ✓ correct</span>}
                             </span>
-                            <span className="bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
+                            <span className="meter" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
                             <span className="count small">{n}</span>
                           </li>
                         )

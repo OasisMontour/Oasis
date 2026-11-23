@@ -32,10 +32,13 @@ export function TeacherHome() {
         .eq('teacher_id', profile.id)
         .order('created_at', { ascending: false }),
     ])
-    setError(c.error?.message ?? l.error?.message ?? null)
+    // Only report load errors here. Clearing would also wipe an action's error (e.g. "posting to Classroom
+    // failed"), because every action reloads the dashboard right after reporting it.
+    const loadError = c.error?.message ?? l.error?.message
+    if (loadError) setError(`Couldn't load your dashboard: ${loadError}`)
     setClasses((c.data as ClassRow[]) ?? [])
     setLessons((l.data as LessonRow[]) ?? [])
-    setLoaded(true)
+    setLoaded(!loadError) // don't claim "No lessons yet" when we just couldn't load them
   }, [profile])
 
   useEffect(() => {
@@ -106,7 +109,7 @@ function LessonCard({
   lesson: LessonRow
   classes: ClassRow[]
   onChange: () => void
-  onError: (msg: string) => void
+  onError: (msg: string | null) => void
 }) {
   const [classId, setClassId] = useState('')
   const [due, setDue] = useState('')
@@ -129,6 +132,8 @@ function LessonCard({
 
   const assign = async (e: FormEvent) => {
     e.preventDefault()
+    if (due && new Date(due).getTime() < Date.now()) return onError('That due date has already passed. Pick a time in the future.')
+    onError(null)
     setBusy(true)
     const { data, error } = await supabase
       .from('assignments')
@@ -147,6 +152,7 @@ function LessonCard({
   }
 
   const retry = async (assignmentId: string) => {
+    onError(null)
     setBusy(true)
     await postToClassroom(assignmentId)
     setBusy(false)
@@ -189,7 +195,7 @@ function LessonCard({
             ))}
           </select>
           <label className="small">
-            Due <input type="datetime-local" className="text" value={due} onChange={(e) => setDue(e.target.value)} />
+            Due <input type="datetime-local" className="text" value={due} min={localNow()} onChange={(e) => setDue(e.target.value)} />
           </label>
           <button disabled={busy || !classId || nQuestions === 0} title={nQuestions === 0 ? 'Add questions first' : undefined}>
             {busy ? 'Posting…' : 'Assign + post to Classroom'}
@@ -198,4 +204,11 @@ function LessonCard({
       )}
     </li>
   )
+}
+
+/** Now as a datetime-local value ("2026-11-23T08:05") in the teacher's time zone. */
+function localNow(): string {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
 }

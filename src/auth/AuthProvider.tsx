@@ -37,14 +37,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // The profile row is created by a database trigger on first sign-in.
   // Role comes from the teacher allowlist, never from the browser.
+  //
+  // Keyed on the user id, not the session object: supabase-js hands us a new session object on every
+  // token refresh (about hourly, and when a tab comes back after a while). Re-loading the profile on each
+  // one flipped `loading`, which made RequireRole unmount the whole page and wiped unsaved work.
+  const userId = session?.user.id ?? null
   useEffect(() => {
-    if (!session) return
+    if (!userId) return
     let cancelled = false
     setLoading(true)
     supabase
       .from('profiles')
       .select('id, role, name, email')
-      .eq('id', session.user.id)
+      .eq('id', userId)
       .single()
       .then(({ data, error }) => {
         if (cancelled) return
@@ -55,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [userId])
 
   const signInWithGoogle = async () => {
     const hd = import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN as string | undefined

@@ -1,14 +1,26 @@
-import { useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { rememberNext, takeNext } from '../lib/next'
 
 export function SignIn() {
   const { loading, session, profile, signInWithGoogle } = useAuth()
   const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const from = (useLocation().state as { from?: string } | null)?.from
 
-  if (!loading && session && profile) {
-    return <Navigate to={profile.role === 'teacher' ? '/teacher' : '/student'} replace />
-  }
+  // Google sign-in always returns to the site root, so park the deep link in sessionStorage until then.
+  useEffect(() => rememberNext(from), [from])
+
+  const signedIn = !loading && !!session && !!profile
+  const redirected = useRef(false) // takeNext() clears the saved path, so only read it once
+  useEffect(() => {
+    if (!signedIn || !profile || redirected.current) return
+    redirected.current = true
+    navigate(takeNext(profile.role), { replace: true })
+  }, [signedIn, profile, navigate])
+
+  if (signedIn) return null
 
   return (
     <main className="signin">

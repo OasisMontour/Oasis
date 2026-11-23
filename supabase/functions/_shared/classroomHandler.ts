@@ -4,7 +4,7 @@
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
 // POST { action: 'post', assignment_id }    -> posts an Oasis assignment to its Classroom course (idempotent)
-// POST { action: 'push_grades', assignment_id } -> writes finished students' scores to Classroom as draft + assigned grades
+// POST { action: 'push_grades', assignment_id } -> writes finished, fully graded students' scores to Classroom as draft + assigned grades
 //                                               (teachers still press Return in Classroom for students to see them)
 //
 // Business errors come back as 200 { ok: false, error } so the browser can show a message.
@@ -27,7 +27,12 @@ export type SyncResult = { created: number; updated: number; newly_enrolled: num
 
 export type AssignmentToPost = { id: string; lessonTitle: string; courseId: string; dueAt: string | null; courseworkId: string | null }
 
-export type GradesToPush = { courseId: string; courseworkId: string | null; grades: { email: string; score: number }[] }
+export type GradesToPush = {
+  courseId: string
+  courseworkId: string | null
+  /** ungraded = short answers the teacher hasn't marked yet. Those count as wrong in the score, so they're held back. */
+  grades: { email: string; score: number; ungraded?: number }[]
+}
 
 export type Deps = {
   fetch: typeof fetch
@@ -147,9 +152,16 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const userIds = await listCourseStudentIds(d.fetch, a.token, g.courseId)
       const subByUser = new Map((await listSubmissions(d.fetch, a.token, g.courseId, courseworkId)).map((s) => [s.userId, s.id]))
       const notInClassroom: string[] = []
+      const needsGrading: string[] = []
       const failed: { email: string; error: string }[] = []
       const todo: { email: string; submissionId: string; grade: number }[] = []
-      for (const { email, score } of g.grades) {
+      for (const { email, score, ungraded } of g.grades) {
+        // An ungraded short answer counts as wrong until the teacher marks it, so sending now would put a
+        // too-low grade in the Classroom gradebook. Hold it back and say who.
+        if (ungraded) {
+          needsGrading.push(email)
+          continue
+        }
         const userId = userIds.get(email.toLowerCase())
         const submissionId = userId ? subByUser.get(userId) : undefined
         if (!submissionId) notInClassroom.push(email)
@@ -170,7 +182,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       }
       await Promise.all(Array.from({ length: Math.min(5, todo.length) }, worker))
       await d.markUsed(caller.id)
-      return json({ ok: true, pushed, not_in_classroom: notInClassroom, failed })
+      return json({ ok: true, pushed, not_in_classroom: notInClassroom, needs_grading: needsGrading, failed })
     }
 
     if (body.action === 'disconnect') {
