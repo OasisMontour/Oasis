@@ -1,0 +1,133 @@
+# Deploys the backend to Supabase from GitHub, so nobody needs a terminal.
+# Run it: GitHub -> Actions -> "Deploy Supabase" -> Run workflow.
+# Needs repo secrets (Settings -> Secrets and variables -> Actions). See docs/SETUP.md "No terminal".
+#   Required: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD
+#   Functions: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, APP_ORIGIN, [TOKEN_ENCRYPTION_KEY]
+#   AI grading (any you have): CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN, GROQ_API_KEY, CEREBRAS_API_KEY
+# Empty secrets are skipped, so a re-run never wipes a value that's already set in Supabase.
+name: Deploy Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: What to deploy
+        type: choice
+        default: everything
+        options: [everything, database only, functions and secrets only]
+      dry_run:
+        description: Dry run (show which migrations would apply, change nothing)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      WHAT: ${{ inputs.what }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Pinned: CLI v3 changed flags (--remote, --yes). Bump on purpose, not by accident.
+      - name: Install Supabase CLI
+        run: npm i -g supabase@3.4.0 && supabase --version
+
+      - name: Check required secrets
+        run: |
+          missing=()
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing+=(SUPABASE_ACCESS_TOKEN)
+          [ -n "$PROJECT_REF" ] || missing+=(SUPABASE_PROJECT_REF)
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing+=(SUPABASE_DB_PASSWORD)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repo secrets: ${missing[*]} (Settings -> Secrets and variables -> Actions)"
+            exit 1
+          fi
+
+      # GitHub's runners have no IPv6 and the direct DB host is IPv6-only on the free plan,
+      # so migrations go through the session pooler (IPv4). Its host comes from the Management API.
+      - name: Find database pooler
+        if: inputs.what != 'functions and secrets only'
+        run: |
+          cfg=$(curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/config/database/pooler") || {
+            echo "::error::Couldn't read the project's pooler config. Check SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF."; exit 1; }
+          row=$(echo "$cfg" | jq -c 'if type=="array" then (map(select(.database_type=="PRIMARY"))[0] // .[0]) else . end')
+          host=$(echo "$row" | jq -r '.db_host // empty')
+          user=$(echo "$row" | jq -r '.db_user // empty')
+          name=$(echo "$row" | jq -r '.db_name // "postgres"')
+          if [ -z "$host" ] || [ -z "$user" ]; then echo "::error::Pooler config had no host/user"; exit 1; fi
+          pw=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["SUPABASE_DB_PASSWORD"],safe=""))')
+          echo "::add-mask::$pw"
+          echo "DB_URL=postgresql://$user:$pw@$host:5432/$name" >> "$GITHUB_ENV"
+          echo "Using session pooler $host:5432"
+
+      - name: Apply database migrations
+        if: inputs.what != 'functions and secrets only'
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            supabase db push --remote="$DB_URL" --dry-run
+          else
+            supabase db push --remote="$DB_URL" --yes
+          fi
+
+      - name: Set function secrets
+        if: inputs.what != 'database only' && inputs.dry_run != true
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          APP_ORIGIN: ${{ secrets.APP_ORIGIN }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+        run: |
+          umask 077
+          f="$RUNNER_TEMP/fn.env"
+          : > "$f"
+          set_names=()
+          for k in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET APP_ORIGIN TOKEN_ENCRYPTION_KEY \
+                   CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_AI_TOKEN GROQ_API_KEY CEREBRAS_API_KEY; do
+            v="${!k}"
+            if [ -n "$v" ]; then printf '%s=%s\n' "$k" "$v" >> "$f"; set_names+=("$k"); fi
+          done
+
+          # TOKEN_ENCRYPTION_KEY: if you didn't give one and Supabase doesn't have one yet, make one here.
+          # It's never printed. Never replace it once teachers have connected Classroom (they'd all have to reconnect).
+          if [ -z "$TOKEN_ENCRYPTION_KEY" ]; then
+            if supabase secrets list --remote="$PROJECT_REF" | grep -qw TOKEN_ENCRYPTION_KEY; then
+              echo "TOKEN_ENCRYPTION_KEY already set in Supabase, leaving it alone."
+            else
+              printf 'TOKEN_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> "$f"
+              set_names+=("TOKEN_ENCRYPTION_KEY (generated)")
+            fi
+          fi
+
+          for k in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET APP_ORIGIN; do
+            [ -n "${!k}" ] || echo "::warning::$k is empty. Google Classroom sign-up won't work until you add it and re-run."
+          done
+
+          if [ -s "$f" ]; then
+            supabase secrets set --remote="$PROJECT_REF" --env-file "$f" --yes
+            echo "Set: ${set_names[*]}"
+          else
+            echo "No function secrets to set."
+          fi
+          rm -f "$f"
+
+      - name: Deploy edge functions
+        if: inputs.what != 'database only' && inputs.dry_run != true
+        run: |
+          supabase functions deploy classroom ai-grade --remote="$PROJECT_REF" --use-api --yes

@@ -13,6 +13,27 @@ One-time steps to get Oasis running against a real Supabase project. About 30 mi
    ```
 3. Project settings -> API: copy the URL and the **anon** key into `.env.local` (and into Vercel's env vars). Never put the `service_role` key in the frontend or in git.
 
+## No terminal? Deploy from GitHub
+
+`.github/workflows/deploy-supabase.yml` does `db push`, sets the function secrets and deploys `classroom` + `ai-grade`, all from the browser.
+
+1. Repo -> Settings -> Secrets and variables -> Actions -> **New repository secret**, one per row:
+
+   | Secret | Where it comes from |
+   |---|---|
+   | `SUPABASE_ACCESS_TOKEN` | supabase.com/dashboard/account/tokens -> Generate new token |
+   | `SUPABASE_PROJECT_REF` | the 20-letter id in your project URL (`supabase.com/dashboard/project/<ref>`) |
+   | `SUPABASE_DB_PASSWORD` | the password you set when creating the project (reset it in Project settings -> Database if lost) |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | the OAuth client from section 2 |
+   | `APP_ORIGIN` | your Vercel URL, `https://...`, no trailing slash |
+   | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AI_TOKEN`, `GROQ_API_KEY`, `CEREBRAS_API_KEY` | optional, AI grading (section 3) |
+   | `TOKEN_ENCRYPTION_KEY` | optional. Leave it out and the first run generates one inside Supabase that nobody ever sees |
+
+2. Actions -> **Deploy Supabase** -> Run workflow. Tick *Dry run* the first time: it only lists the migrations it would apply.
+3. Run it again without *Dry run*. Re-run any time after adding a secret or merging a migration. Empty secrets are skipped, so a re-run never blanks a value already in Supabase.
+
+Never put the `service_role` key in a GitHub secret, Vercel, or the frontend. The functions get it from Supabase automatically.
+
 ## 2. Google sign-in
 
 1. Google Cloud Console -> new project "Oasis" -> APIs & Services -> OAuth consent screen: External, app name Oasis, scopes `openid`, `email`, `profile` only.
