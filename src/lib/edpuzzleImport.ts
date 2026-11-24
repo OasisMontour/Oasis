@@ -164,6 +164,9 @@ function parseBlock(b: Block, warnings: string[]): DraftQuestion | null {
   const firstMarked = lines.findIndex((l, i) => i > 0 && CHOICE_PREFIX.test(l.replace(CORRECT_MARK, '')))
   if (kindHint === 'short') {
     promptLines = lines
+    const q = lines.findIndex((l) => /\?\s*$/.test(l))
+    if (q !== -1 && q < lines.length - 1)
+      warnings.push(`${where}: kept ${lines.length - 1 - q} line(s) after the question mark as question text. Delete them if they're page text.`)
   } else if (firstMarked > 0) {
     promptLines = lines.slice(0, firstMarked)
     choiceLines = lines.slice(firstMarked)

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/bulkPaste'
 import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
+import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
@@ -164,8 +165,10 @@ export function LessonBuilder() {
   // save_lesson like any other, so they get the same ownership checks and question locking.
   const [importText, setImportText] = useState('')
   const [importNote, setImportNote] = useState<{ added: number; needAnswer: number; warnings: string[] } | null>(null)
-  const addImport = () => {
-    const r = parseEdpuzzlePaste(importText)
+  const [fromBookmarklet, setFromBookmarklet] = useState(false)
+  const addImport = (text = importText, ytOverride: string | null = null) => {
+    const r = parseEdpuzzlePaste(text)
+    if (ytOverride) r.youtubeId = ytOverride
     const needAnswer = r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length
     setImportNote({ added: r.questions.length, needAnswer, warnings: r.warnings })
     if (r.youtubeId && !youtubeId) {
@@ -180,6 +183,26 @@ export function LessonBuilder() {
     setSource('edpuzzle')
     touch()
   }
+
+  // Arriving from the "Send to Oasis" bookmarklet: the data is in the #fragment (never sent to a
+  // server). It's untrusted, so it only pre-fills drafts; nothing is saved until the teacher clicks Save.
+  const bookmarkletDone = useRef(false)
+  useEffect(() => {
+    if (!isNew || bookmarkletDone.current) return
+    const p = readBookmarkletHash(window.location.hash)
+    if (!p) return
+    bookmarkletDone.current = true
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    setFromBookmarklet(true)
+    addImport(p.text, p.yt)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew])
+
+  // React refuses javascript: URLs in JSX, so the bookmarklet link's href is set directly.
+  const bookmarkletRef = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    bookmarkletRef.current?.setAttribute('href', bookmarkletHref(window.location.origin))
+  })
 
   // ---- save
   const problems = (): string[] => {
@@ -247,6 +270,20 @@ export function LessonBuilder() {
   const importPanel = (
     <details className="card" open={fromEdpuzzle || undefined}>
       <summary>Bring over an Edpuzzle lesson</summary>
+      <div className="stack small">
+        <p>
+          <strong>Fastest:</strong> drag this button to your bookmarks bar:{' '}
+          {/* href is set in an effect; clicking it here does nothing */}
+          <a ref={bookmarkletRef} className="button" onClick={(e) => e.preventDefault()} title="Drag me to your bookmarks bar">
+            Send to Oasis
+          </a>
+        </p>
+        <p className="muted">
+          Then open your lesson's questions in Edpuzzle and click the bookmark. It reads only the page you're looking at
+          (nothing is sent to Edpuzzle and Oasis never sees your Edpuzzle login) and brings the questions here for you to
+          check. If Edpuzzle changes their site or your school blocks bookmarklets, copy and paste instead:
+        </p>
+      </div>
       <ol className="muted small">
         <li>Open the lesson in Edpuzzle and click into the video's questions.</li>
         <li>Select the questions (or the whole page) and copy.</li>
@@ -257,9 +294,10 @@ export function LessonBuilder() {
         crops, notes, voiceovers and uploaded (non-YouTube) videos don't come over.
       </p>
       <textarea aria-label="Edpuzzle questions" rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={EDPUZZLE_IMPORT_EXAMPLE} />
-      <button onClick={addImport} disabled={!importText.trim()}>Import questions</button>
+      <button onClick={() => addImport()} disabled={!importText.trim()}>Import questions</button>
       {importNote && (
         <div role="status" className="stack small">
+          {fromBookmarklet && <p className="muted">Brought over from your Edpuzzle page. Check every question before you save.</p>}
           <p className={importNote.added ? 'ok' : 'error'}>
             {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : 'No questions found.'}
             {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
