@@ -70,6 +70,7 @@ We **never**: sell or rent personal information; use it for advertising, includi
 | Vercel (website hosting) | Serves the Oasis website | IP address and request logs |
 | Google | Sign-in, Google Classroom, YouTube video player | Sign-in requests; for teachers who connect Classroom: assignments Oasis posts and grades the teacher sends. YouTube receives the video request from the student's browser. |
 | Cloudflare Workers AI, Groq, Cerebras (only if a teacher turns on AI grading) | Suggest a grade for a short answer | The question, the teacher's expected answer, and the student's answer. **No names, emails, or IDs.** |
+| Cloudflare Workers AI, Groq, Cerebras (only when a teacher asks for AI question suggestions) | Suggest questions for a lesson | What the teacher pastes or types: the video's transcript or notes, the lesson title, subject and grade level. **No student information.** |
 
 - **Legal reasons.** We'll disclose information if the law requires it (for example, a valid subpoena). Unless the law forbids it, we'll tell the school first so it can respond.
 - **If Oasis changes hands.** If Oasis is ever transferred to a new operator, this policy and the school's agreement go with the data, and we'll tell schools first so they can delete their data instead.
@@ -79,6 +80,8 @@ We **never**: sell or rent personal information; use it for advertising, includi
 ## 5. AI grading
 
 AI grading is off unless a teacher turns it on for a lesson. When it's on, short answers can be sent to an AI provider (Cloudflare Workers AI first, then Groq or Cerebras if needed) to suggest whether the answer is correct. We send only the question, the teacher's expected answer, and the student's answer: never the student's name, email, or any ID. Answers that look like they're trying to trick the grader are not sent; the teacher grades those. We only use providers whose terms say they don't train on what we send and don't keep it. We store the suggested verdict, a one-line reason for the teacher, and which AI model made it. Every AI grade is labelled "AI" and the teacher can change it. The teacher is responsible for the final grade.
+
+**AI question suggestions.** When building a lesson, a teacher can paste a video's transcript and ask AI to suggest questions. Only what the teacher pastes or types is sent (the transcript or notes, the lesson title, subject and grade level), never anything about students, and only to the same providers. Suggestions are labelled "AI" and become part of a lesson only if the teacher adds them.
 
 ## 6. Google user data (Limited Use disclosure)
 

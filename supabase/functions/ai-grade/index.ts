@@ -9,16 +9,13 @@
 //   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN   [CLOUDFLARE_AI_MODEL, CLOUDFLARE_AI_DAILY_CAP]
 //   GROQ_API_KEY                                 [GROQ_MODEL, GROQ_DAILY_CAP]
 //   CEREBRAS_API_KEY                             [CEREBRAS_MODEL, CEREBRAS_DAILY_CAP]
-//   AI_PROVIDER_ORDER
+//   AI_PROVIDER_ORDER, <PROVIDER>_QUESTION_UNITS (see _shared/aiProviders.ts)
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { handleAiGrade, type ClaimResult, type Provider } from '../_shared/aiGrader.ts'
+import { handleAiGrade, type ClaimResult } from '../_shared/aiGrader.ts'
+import { providersFromEnv } from '../_shared/aiProviders.ts'
 
 const env = (k: string) => Deno.env.get(k)?.trim() || undefined
-const cap = (k: string, d: number) => {
-  const n = Number(env(k))
-  return Number.isInteger(n) && n >= 0 ? n : d
-}
 
 const url = env('SUPABASE_URL')!
 const anon = env('SUPABASE_ANON_KEY')!
@@ -27,45 +24,8 @@ const admin = createClient(url, env('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { per
 const asCaller = (authHeader: string) =>
   createClient(url, anon, { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } })
 
-// Daily caps default to well under each free tier, so we stop before the provider does.
-//   Cloudflare Workers AI free: 10,000 neurons/day; a grade on gemma-4-26b is ~3-4 neurons.
-//   Groq / Cerebras free: per-model request limits (Groq gpt-oss-120b: 1,000 requests/day).
-const all: Record<string, Provider | null> = {
-  cloudflare:
-    env('CLOUDFLARE_ACCOUNT_ID') && env('CLOUDFLARE_AI_TOKEN')
-      ? {
-          name: 'cloudflare',
-          url: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env('CLOUDFLARE_ACCOUNT_ID')!)}/ai/v1/chat/completions`,
-          key: env('CLOUDFLARE_AI_TOKEN')!,
-          model: env('CLOUDFLARE_AI_MODEL') ?? '@cf/google/gemma-4-26b-a4b-it',
-          dailyCap: cap('CLOUDFLARE_AI_DAILY_CAP', 2000),
-        }
-      : null,
-  groq: env('GROQ_API_KEY')
-    ? {
-        name: 'groq',
-        url: 'https://api.groq.com/openai/v1/chat/completions',
-        key: env('GROQ_API_KEY')!,
-        model: env('GROQ_MODEL') ?? 'openai/gpt-oss-120b',
-        dailyCap: cap('GROQ_DAILY_CAP', 800),
-        extra: { reasoning_effort: 'low' },
-      }
-    : null,
-  cerebras: env('CEREBRAS_API_KEY')
-    ? {
-        name: 'cerebras',
-        url: 'https://api.cerebras.ai/v1/chat/completions',
-        key: env('CEREBRAS_API_KEY')!,
-        model: env('CEREBRAS_MODEL') ?? 'gpt-oss-120b',
-        dailyCap: cap('CEREBRAS_DAILY_CAP', 800),
-        extra: { reasoning_effort: 'low' },
-      }
-    : null,
-}
-const providers = (env('AI_PROVIDER_ORDER') ?? 'cloudflare,groq,cerebras')
-  .split(',')
-  .map((s) => all[s.trim()])
-  .filter((p): p is Provider => !!p)
+// Caps and defaults are in _shared/aiProviders.ts.
+const providers = providersFromEnv(env)
 
 const cors = {
   'Access-Control-Allow-Origin': env('APP_ORIGIN') ?? '*',

@@ -5,12 +5,18 @@ import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/b
 import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
 import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
+import {
+  COUNT_OPTIONS, KIND_LABEL, TRANSCRIPT_MAX, suggestErrorText, suggestionToDraft,
+  type QuestionKinds, type SuggestResult, type Suggestion,
+} from '../lib/aiQuestions'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
-type Draft = DraftQuestion & { key: string; timeText: string }
+// `ai`: added from an AI suggestion in this session. Shown with an AI tag so the teacher checks it before saving.
+type Draft = DraftQuestion & { key: string; timeText: string; ai?: boolean }
 
 let keySeq = 0
 const toDraft = (q: DraftQuestion): Draft => ({ ...q, key: `q${++keySeq}`, timeText: formatTime(q.at_s) })
+const toAiDraft = (q: DraftQuestion): Draft => ({ ...toDraft(q), ai: true })
 
 export function LessonBuilder() {
   const { id } = useParams()
@@ -28,7 +34,7 @@ export function LessonBuilder() {
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
-  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
+  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle' | 'ai'>('manual')
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -204,6 +210,46 @@ export function LessonBuilder() {
     bookmarkletRef.current?.setAttribute('href', bookmarkletHref(window.location.origin))
   })
 
+  // ---- AI question suggestions. The teacher pastes the video's transcript; suggestions come back into their own
+  // list and only become questions when the teacher adds them. Nothing is saved until they click Save.
+  const [transcript, setTranscript] = useState('')
+  const [suggestCount, setSuggestCount] = useState(5)
+  const [suggestKinds, setSuggestKinds] = useState<QuestionKinds>('mix')
+  const [grade, setGrade] = useState('')
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestions, setSuggestions] = useState<(Suggestion & { key: string })[]>([])
+  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'error'; text: string; warnings: string[] } | null>(null)
+
+  const suggest = async () => {
+    if (!duration || suggesting) return
+    setSuggesting(true)
+    setSuggestNote(null)
+    const { data, error } = await supabase.functions.invoke<SuggestResult>('ai-questions', {
+      body: { transcript, duration_s: duration, title: title.trim(), subject: subject.trim(), grade: grade.trim(), count: suggestCount, kinds: suggestKinds },
+    })
+    setSuggesting(false)
+    if (error || !data || !data.ok) return setSuggestNote({ kind: 'error', text: suggestErrorText(data && !data.ok ? data.error : null), warnings: [] })
+    setSuggestions(data.questions.map((q) => ({ ...q, key: `s${++keySeq}` })))
+    const n = data.questions.length
+    setSuggestNote({
+      kind: 'ok',
+      text: `${n} suggestion${n === 1 ? '' : 's'} below. Add the ones you want, then check them in your question list.` +
+        (data.left_today <= 3 ? ` ${data.left_today} AI suggestion run${data.left_today === 1 ? '' : 's'} left today.` : ''),
+      warnings: data.warnings,
+    })
+  }
+
+  const addSuggestions = (keys: string[]) => {
+    const picked = suggestions.filter((s) => keys.includes(s.key))
+    if (!picked.length) return
+    setQuestions((qs) => [...qs, ...picked.map((s) => toAiDraft(suggestionToDraft(s)))].sort((a, b) => a.at_s - b.at_s))
+    setSuggestions((ss) => ss.filter((s) => !keys.includes(s.key)))
+    setSource((s) => (s === 'manual' ? 'ai' : s))
+    touch()
+  }
+
+  const discardSuggestion = (key: string) => setSuggestions((ss) => ss.filter((s) => s.key !== key))
+
   // ---- save
   const problems = (): string[] => {
     const out: string[] = []
@@ -376,6 +422,7 @@ export function LessonBuilder() {
             <li key={q.key} className="card stack">
               <div className="row">
                 <strong>{i + 1}.</strong>
+                {q.ai && <span className="tag ai" title="Suggested by AI. Check the wording, time and answer before you save.">AI</span>}
                 <input
                   aria-label="Time"
                   className="text time"
@@ -435,6 +482,88 @@ export function LessonBuilder() {
             </li>
           ))}
         </ol>
+
+        <details className="card ai-panel">
+          <summary>Suggest questions with AI</summary>
+          <div className="stack small">
+            <p className="muted">
+              Paste the video's transcript and AI suggests questions at the right moments. You choose which to add, and
+              you can edit every one. On YouTube, under the video: <strong>…more</strong> → <strong>Show transcript</strong>,
+              then select all the text in the transcript panel and copy. A caption file (.srt or .vtt) or your own notes work too.
+            </p>
+            <textarea aria-label="Video transcript" rows={8} maxLength={TRANSCRIPT_MAX} value={transcript}
+              onChange={(e) => setTranscript(e.target.value)} placeholder={'0:00\nToday we are looking at cells…\n0:12\nEvery living thing is made of…'} />
+            <div className="row">
+              <label>
+                How many{' '}
+                <select value={suggestCount} onChange={(e) => setSuggestCount(Number(e.target.value))}>
+                  {COUNT_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <label>
+                Type{' '}
+                <select value={suggestKinds} onChange={(e) => setSuggestKinds(e.target.value as QuestionKinds)}>
+                  {(Object.keys(KIND_LABEL) as QuestionKinds[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+                </select>
+              </label>
+              <label>
+                Grade level{' '}
+                <input className="text short" value={grade} maxLength={40} onChange={(e) => setGrade(e.target.value)} placeholder="e.g. 8th grade" />
+              </label>
+              <button className="primary" onClick={suggest} disabled={suggesting || !duration || !transcript.trim()}>
+                {suggesting ? 'Thinking… (up to a minute)' : 'Suggest questions'}
+              </button>
+            </div>
+            {!duration && <p className="muted">Load the YouTube video first, so the AI knows how long it is.</p>}
+            <p className="muted">
+              Sent to the AI: the transcript, title, subject and grade level. Nothing about your students. The AI service
+              doesn't keep it or train on it.
+            </p>
+            {suggestNote && (
+              <div role={suggestNote.kind === 'error' ? 'alert' : 'status'}>
+                <p className={suggestNote.kind}>{suggestNote.text}</p>
+                {suggestNote.warnings.length > 0 && <ul className="warn">{suggestNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+              </div>
+            )}
+          </div>
+          {suggestions.length > 0 && (
+            <div className="stack">
+              <div className="section-head">
+                <strong>AI suggestions ({suggestions.length})</strong>
+                <span className="row">
+                  <button onClick={() => addSuggestions(suggestions.map((s) => s.key))}>Add all</button>
+                  <button className="small" onClick={() => setSuggestions([])}>Discard all</button>
+                </span>
+              </div>
+              <ol className="cards">
+                {suggestions.map((s) => (
+                  <li key={s.key} className="card stack suggestion">
+                    <div className="row">
+                      <span className="tag ai">AI suggestion</span>
+                      <span className="muted small">{formatTime(s.at_s)} · {s.kind === 'mc' ? 'Multiple choice' : 'Short answer'}</span>
+                      <button className="small" onClick={() => player.current?.seekTo(s.at_s, true)}>Jump to</button>
+                    </div>
+                    <p>{s.prompt}</p>
+                    {s.kind === 'mc' && (
+                      <ul className="choices small">
+                        {s.choices.map((c, ci) => (
+                          <li key={ci} className={ci === s.correct_index ? 'picked' : undefined}>
+                            {String.fromCharCode(65 + ci)}) {c}{ci === s.correct_index && <span className="muted"> ← AI's answer, check it</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.kind === 'short' && s.rubric && <p className="muted small">Expected answer: {s.rubric}</p>}
+                    <div className="row">
+                      <button onClick={() => addSuggestions([s.key])}>Add to lesson</button>
+                      <button className="small" onClick={() => discardSuggestion(s.key)}>Discard</button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </details>
 
         {!fromEdpuzzle && importPanel}
 

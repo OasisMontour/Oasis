@@ -23,7 +23,7 @@ const item = (over: Partial<ClaimedItem> = {}): ClaimedItem => ({
   ...over,
 })
 
-const prov = (name: string): Provider => ({ name, url: `https://${name}.test/v1/chat/completions`, key: `${name}-key`, model: `${name}-model`, dailyCap: 100 })
+const prov = (name: string): Provider => ({ name, url: `https://${name}.test/v1/chat/completions`, key: `${name}-key`, model: `${name}-model`, dailyCap: 100, questionUnits: 1 })
 
 const reply = (content: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(status === 200 ? JSON.stringify({ choices: [{ message: { content } }] }) : 'nope', { status, headers })

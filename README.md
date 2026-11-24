@@ -32,6 +32,7 @@ CI runs all of these on every PR. Nothing merges to `main` without a passing CI 
 - Scores are computed in the database. `save_progress` rejects skipping ahead: past an unanswered question, faster than real time, or past the end of the video.
 - Classes and rosters only come from Google Classroom. No manual classes, join codes, or roster edits.
 - AI grading (optional) only writes short answers nobody has graded, only through the `ai-grade` Edge Function, under per-teacher and monthly caps that fail closed. Teachers can change every AI grade. See docs/SETUP.md.
+- AI question suggestions (optional) never write to a lesson. The `ai-questions` Edge Function returns suggestions from a transcript the teacher pastes; the teacher adds each one by hand and saves through `save_lesson`. Only what the teacher typed is sent, never student data, under their own daily and monthly caps.
 - Teachers are whoever is on `teacher_allowlist`. Everyone else who signs in is a student. Role can't be changed from the browser.
 
 Every one of those rules has a test in `supabase/tests/10_rls_test.sql`. Change a policy, add a test.

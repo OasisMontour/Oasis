@@ -3,7 +3,7 @@
 # Needs repo secrets (Settings -> Secrets and variables -> Actions). See docs/SETUP.md "No terminal".
 #   Required: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD
 #   Functions: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, APP_ORIGIN, [TOKEN_ENCRYPTION_KEY]
-#   AI grading (any you have): CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN, GROQ_API_KEY, CEREBRAS_API_KEY
+#   AI grading + question suggestions (any you have): CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN, GROQ_API_KEY, CEREBRAS_API_KEY
 # Empty secrets are skipped, so a re-run never wipes a value that's already set in Supabase.
 name: Deploy Supabase
 
@@ -130,4 +130,4 @@ jobs:
       - name: Deploy edge functions
         if: inputs.what != 'database only' && inputs.dry_run != true
         run: |
-          supabase functions deploy classroom ai-grade --remote="$PROJECT_REF" --use-api --yes
+          supabase functions deploy classroom ai-grade ai-questions --remote="$PROJECT_REF" --use-api --yes

@@ -174,35 +174,41 @@ function Usage({ usage }: { usage: AdminUsage }) {
   )
 }
 
-// AI grading spend check. Counts only: which answers were graded and for whom stays on the teachers' results pages.
+// AI spend check (grading and question suggestions). Counts only: which answers were graded and for whom stays on
+// the teachers' results pages.
 function AiUsage({ ai }: { ai: AdminAiUsage }) {
   const pct = ai.global_monthly_cap > 0 ? Math.round((ai.month_answers / ai.global_monthly_cap) * 100) : 0
+  const genPct = ai.global_monthly_generations > 0 ? Math.round((ai.month_generations / ai.global_monthly_generations) * 100) : 0
   return (
     <section>
       <h2>
-        AI grading <span className={ai.enabled ? 'tag' : 'tag warn'}>{ai.enabled ? 'on' : 'off'}</span>
+        AI <span className={ai.enabled ? 'tag' : 'tag warn'}>{ai.enabled ? 'on' : 'off'}</span>
+        {ai.enabled && !ai.questions_enabled && <span className="tag warn">question suggestions off</span>}
       </h2>
-      <ul className="stats" aria-label="AI grading">
+      <ul className="stats" aria-label="AI use">
         <Stat label="Answers graded today" value={ai.today_answers} note={`cap ${ai.teacher_daily_cap} per teacher per day`} />
         <Stat label="Answers graded this month" value={ai.month_answers} of={ai.global_monthly_cap} note={`${pct}% of the monthly cap`} />
+        <Stat label="Question suggestion runs today" value={ai.today_generations} note={`cap ${ai.teacher_daily_generations} per teacher per day`} />
+        <Stat label="Question suggestion runs this month" value={ai.month_generations} of={ai.global_monthly_generations} note={`${genPct}% of the monthly cap`} />
         {ai.providers.map((p) => {
           const parked = p.cooldown_until && new Date(p.cooldown_until) > new Date()
           return (
             <Stat
               key={p.provider}
-              label={`${p.provider} calls today`}
+              label={`${p.provider} budget used today`}
               value={p.calls}
               note={
                 parked
                   ? `paused until ${new Date(p.cooldown_until!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-                  : `${p.failures} failed`
+                  : `${p.failures} failed · 1 per grade, more per suggestion run`
               }
             />
           )
         })}
       </ul>
       {ai.providers.length === 0 && <p className="muted small">No AI calls yet today.</p>}
-      {pct >= 80 && <p className="error small">Over 80% of this month's AI cap is used. Once it's hit, short answers stay ungraded until their teacher grades them.</p>}
+      {pct >= 80 && <p className="error small">Over 80% of this month's AI grading cap is used. Once it's hit, short answers stay ungraded until their teacher grades them.</p>}
+      {genPct >= 80 && <p className="error small">Over 80% of this month's AI question suggestion cap is used. Once it's hit, teachers write questions by hand.</p>}
     </section>
   )
 }

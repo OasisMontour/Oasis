@@ -101,6 +101,12 @@ export type AdminAiUsage = {
   global_monthly_cap: number
   month_answers: number
   today_answers: number
+  questions_enabled: boolean
+  teacher_daily_generations: number
+  global_monthly_generations: number
+  today_generations: number
+  month_generations: number
+  /** `calls` is budget units: 1 per grade, more per question-generation call (see _shared/aiProviders.ts). */
   providers: { provider: string; calls: number; failures: number; cooldown_until: string | null; last_error: string | null }[]
 }
 

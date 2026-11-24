@@ -62,6 +62,13 @@ button.student { display: flex; gap: 6px; } button.student .email { display: blo
 .tag.warn, .tag.grade { background: #fff4e0; border-color: #e8b860; }
 .tag.ai { background: #eef0ff; border-color: #a9b2f0; }
 .ai-note { margin: 4px 0; color: #3d4560; }
+/* AI question suggestions: kept visibly apart from real questions until the teacher adds them. */
+.card.suggestion { background: #f7f8ff; border-color: #c9cff5; border-left: 4px solid #a9b2f0; }
+.card.suggestion p { margin: 0; }
+.choices { margin: 0; padding-left: 1.2em; list-style: none; }
+.choices li.picked { font-weight: 600; }
+ul.warn { margin: 4px 0; padding: 6px 10px 6px 1.8em; background: #fff4e0; border: 1px solid #e8b860; border-radius: 8px; }
+input.text.short { width: 9em; }
 .results-table tr.gone .name { color: var(--muted); }
 .answers, .qstats { padding-left: 0; list-style: none; display: grid; gap: 8px; }
 blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); border-left: 3px solid #cfd8d5; white-space: pre-wrap; }

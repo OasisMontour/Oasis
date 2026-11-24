@@ -12,6 +12,11 @@
 //   * Quotas are charged before the call (ai_claim_answers) and every provider has a daily cap below its
 //     free tier, so a bug or abuse runs out of quota instead of running up a bill.
 
+import { callProvider, clean, type Provider } from './aiProviders.ts'
+
+export { clean, cooldownFor } from './aiProviders.ts'
+export type { Provider } from './aiProviders.ts'
+
 export type ClaimedItem = { attempt_id: string; question_id: string; prompt: string; rubric: string; response: string }
 
 export type ClaimResult =
@@ -19,17 +24,6 @@ export type ClaimResult =
   | { ok: false; reason: 'lesson_off' | 'disabled' | 'teacher_cap' | 'monthly_cap' | 'busy'; remaining: number }
 
 export type Outcome = 'graded' | 'unsure' | 'skipped' | 'unavailable'
-
-export type Provider = {
-  name: string
-  url: string
-  key: string
-  model: string
-  /** Calls per UTC day we allow ourselves, set below the provider's free limit. */
-  dailyCap: number
-  /** Provider-specific request fields (e.g. reasoning_effort). */
-  extra?: Record<string, unknown>
-}
 
 export type Deps = {
   fetch: typeof fetch
@@ -57,17 +51,6 @@ export const MAX_RESPONSE_CHARS = 1500
 export const MIN_CONFIDENCE = { correct: 0.9, incorrect: 0.8 }
 
 // ---------------------------------------------------------------- input handling
-
-/** NFKC, drop control / zero-width / bidi characters, collapse runs of blank lines. */
-export function clean(text: string): string {
-  return text
-    .normalize('NFKC')
-    // eslint-disable-next-line no-control-regex, no-misleading-character-class
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFFB]/g, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
 
 // Signs the student is writing to the grader rather than answering. Normal answers almost never contain
 // these, and a false positive only means the teacher grades that one by hand.
@@ -170,44 +153,6 @@ export function decide(v: Verdict): { outcome: 'graded'; correct: boolean } | { 
 
 // ---------------------------------------------------------------- providers
 
-type CallResult =
-  | { ok: true; content: unknown }
-  | { ok: false; cooldownS: number; error: string }
-
-/** Seconds to park a provider after an error. 0 = just try the next one. */
-export function cooldownFor(status: number, retryAfter: string | null): number {
-  if (status === 429) {
-    const s = Number(retryAfter)
-    return Number.isFinite(s) && s > 0 ? Math.min(Math.ceil(s), 86400) : 600
-  }
-  if (status === 401 || status === 402 || status === 403) return 3600 // bad key, or free quota/billing wall
-  if (status === 400 || status === 404 || status === 422) return 900 // misconfigured model/params; don't hammer
-  return 0 // 5xx, timeouts: transient
-}
-
-async function callProvider(p: Provider, messages: unknown, deps: Deps): Promise<CallResult> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), deps.timeoutMs ?? 12000)
-  try {
-    const res = await deps.fetch(p.url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${p.key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...p.extra, model: p.model, messages, temperature: 0, max_tokens: 600, stream: false }),
-      signal: ctrl.signal,
-    })
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => {})
-      return { ok: false, cooldownS: cooldownFor(res.status, res.headers.get('retry-after')), error: `HTTP ${res.status}` }
-    }
-    const body = (await res.json().catch(() => null)) as { choices?: { message?: { content?: unknown } }[] } | null
-    return { ok: true, content: body?.choices?.[0]?.message?.content }
-  } catch (e) {
-    return { ok: false, cooldownS: 0, error: (e as Error).name === 'AbortError' ? 'timeout' : 'network error' }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 export type GradeOne =
   | { outcome: 'graded'; correct: boolean; reason: string; model: string }
   | { outcome: 'unsure' | 'skipped'; reason: string; model: string }
@@ -227,7 +172,7 @@ export async function gradeOne(item: ClaimedItem, deps: Deps, parked: Set<string
       parked.add(p.name)
       continue
     }
-    const r = await callProvider(p, messages, deps)
+    const r = await callProvider(p, messages, { fetch: deps.fetch, timeoutMs: deps.timeoutMs ?? 12000, maxTokens: 600, temperature: 0 })
     if (!r.ok) {
       if (r.cooldownS > 0) parked.add(p.name)
       // Never log the answer or the prompt: only which provider failed and how.
