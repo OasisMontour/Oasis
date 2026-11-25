@@ -72,7 +72,7 @@ export function clean(text: string): string {
 // Signs the student is writing to the grader rather than answering. Normal answers almost never contain
 // these, and a false positive only means the teacher grades that one by hand.
 const INJECTION_PATTERNS: RegExp[] = [
-  /\b(ignore|disregard|forget|override|bypass)\b[^.\n]{0,60}\b(instruction|instructions|prompt|rules?|above|previous|prior|rubric|expected|system|teacher|grader)\b/i,
+  /\b(ignore|disregard|forget|override|bypass)\b[\s\S]{0,80}?\b(instruction|instructions|prompt|rules?|above|previous|prior|rubric|expected|system|teacher|grader)\b/i,
   /\b(system|developer|assistant)\s*(prompt|message|instruction|:)/i,
   /\b(you are|act as|pretend|roleplay|role-play)\b[^.\n]{0,40}\b(grader|teacher|ai|assistant|model|chatgpt|gpt|llm)\b/i,
   /\b(grader|grading|rubric|verdict|graded|grade (this|it|me))\b/i,
@@ -86,16 +86,40 @@ const INJECTION_PATTERNS: RegExp[] = [
   /\b(if|dear|hey|hi|as|to)\s+(an?\s+|the\s+)?(ai|bot|chatgpt|gpt|model|llm)\b|\b(ai|bot|chatgpt|gpt)\s*[,:]/i,
   /\b(json|prompt injection|jailbreak|llm|large language model)\b/i,
   /```|<\/?[a-z_][\w-]*[^>]*>|\{\s*"|"\s*:\s*"|\[\s*(inst|system|sys)\s*\]|<<<|>>>|###/i,
+  // posing as someone else who already checked it, or starting a "new task"
+  /\b(reviewer|evaluator|teacher here)\b/i,
+  /\b(end of (the )?(student|answer|input)|new task|new instructions?)\b/i,
+  /\b(output|respond|reply)\s+(with\s+)?["']?(correct|right|true)\b/i,
   // Latin letters mixed with Cyrillic/Greek look-alikes inside one word (dodges the patterns above)
   /[a-z][\u0370-\u03FF\u0400-\u04FF]|[\u0370-\u03FF\u0400-\u04FF][a-z]|(^|[^\p{L}])[\u0370-\u03FF\u0400-\u04FF]+[a-z]/iu,
 ]
+
+// Small caps and IPA letters that look like Latin ones but survive NFKC.
+const LOOKALIKE: Record<string, string> = {
+  'ɪ': 'i', 'ɢ': 'g', 'ɴ': 'n', 'ᴏ': 'o', 'ʀ': 'r', 'ᴇ': 'e', 'ᴘ': 'p', 'ᴠ': 'v', 'ᴜ': 'u', 'ᴛ': 't', 'ᴄ': 'c', 'ᴀ': 'a',
+  'ᴅ': 'd', 'ʜ': 'h', 'ᴋ': 'k', 'ʟ': 'l', 'ᴍ': 'm', 'ᴡ': 'w', 'ʏ': 'y', 'ᴢ': 'z', 'ɡ': 'g', 'ı': 'i', 'ꜱ': 's', 'ʙ': 'b',
+}
+const LEET: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', $: 's' }
+
+/** The text as a person (or model) would read it: accents dropped, look-alikes and leetspeak folded,
+ *  under_scores split and s p a c e d letters joined. Only used for matching, never sent anywhere. */
+export function skeleton(s: string): string {
+  let t = s.normalize('NFKD').replace(/\p{M}/gu, '')
+  t = [...t].map((ch) => LOOKALIKE[ch] ?? ch).join('').replace(/[_*~|]+/g, ' ')
+  t = t.replace(/(?<![\p{L}\d])(?:\p{L} ){2,}\p{L}(?![\p{L}\d])/gu, (m) => m.replace(/ /g, ''))
+  // Words that mix letters and digits (1gn0re). Pure numbers (1984, 3.14) and chemistry (H2O, CO2) keep their digits
+  // because they only matter if the folded word then matches an injection pattern.
+  t = t.replace(/[\p{L}\d@$]*\d[\p{L}\d@$]*/gu, (w) => (/\p{L}/u.test(w) ? [...w].map((c) => LEET[c] ?? c).join('') : w))
+  return t
+}
 
 /** A reason to keep this answer away from the model (the teacher grades it), or null if it's fine to send. */
 export function precheck(response: string): string | null {
   const r = clean(response)
   if (!r) return 'Blank answer.'
   if (r.length > MAX_RESPONSE_CHARS) return 'Too long for AI grading.'
-  if (INJECTION_PATTERNS.some((p) => p.test(r))) return 'Looks like it talks to the grader, so AI skipped it.'
+  const sk = skeleton(r)
+  if (INJECTION_PATTERNS.some((p) => p.test(r) || p.test(sk))) return 'Looks like it talks to the grader, so AI skipped it.'
   return null
 }
 
@@ -140,16 +164,21 @@ export function parseVerdict(content: unknown): Verdict | null {
   const start = s.indexOf('{')
   const end = s.lastIndexOf('}')
   if (start < 0 || end < start) return null
+  const body = s.slice(start, end + 1)
+  // JSON.parse keeps the LAST of duplicate keys, so {"verdict":"incorrect",...,"verdict":"correct"} would read as
+  // correct. Exactly one verdict and one confidence, or it's ambiguous and goes to the teacher.
+  if ((body.match(/"verdict"\s*:/g) ?? []).length !== 1 || (body.match(/"confidence"\s*:/g) ?? []).length !== 1) return null
   let o: unknown
   try {
-    o = JSON.parse(s.slice(start, end + 1))
+    o = JSON.parse(body)
   } catch {
     return null
   }
   if (!o || typeof o !== 'object' || Array.isArray(o)) return null
   const { verdict, confidence, reason } = o as Record<string, unknown>
   if (verdict !== 'correct' && verdict !== 'incorrect' && verdict !== 'unsure') return null
-  const c = typeof confidence === 'string' ? Number(confidence) : confidence
+  // Plain decimals only: Number() would also read "0x1" or "1e0" as 1.
+  const c = typeof confidence === 'string' && /^\s*\d*\.?\d+\s*$/.test(confidence) ? Number(confidence) : confidence
   if (typeof c !== 'number' || !Number.isFinite(c) || c < 0 || c > 1) return null
   return { verdict, confidence: c, reason: cleanReason(typeof reason === 'string' ? reason : '') }
 }

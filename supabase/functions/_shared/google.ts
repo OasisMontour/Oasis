@@ -2,6 +2,48 @@
 
 export class InvalidGrantError extends Error {}
 
+/** A Google API refusal, with Google's own status + message, so teachers (and we) can see why. */
+export class GoogleApiError extends Error {
+  constructor(
+    public status: number,
+    public reason: string,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+async function googleError(res: Response, what: string): Promise<GoogleApiError> {
+  const b = (await res.json().catch(() => ({}))) as { error?: { message?: string; status?: string } }
+  const reason = b.error?.status ?? String(res.status)
+  const msg = b.error?.message ? `: ${b.error.message.slice(0, 300)}` : ''
+  return new GoogleApiError(res.status, reason, `Google Classroom refused ${what} (${res.status} ${reason})${msg}`)
+}
+
+/** GET with one or two retries on 429/503 (Classroom quotas), honoring Retry-After up to 5s. */
+async function getWithRetry(f: typeof fetch, url: string, token: string, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Response> {
+  for (let i = 0; ; i++) {
+    const res = await f(url, { headers: { Authorization: `Bearer ${token}` } })
+    if ((res.status !== 429 && res.status !== 503) || i >= 2) return res
+    const after = Number(res.headers.get('Retry-After'))
+    await sleep(Number.isFinite(after) && after > 0 ? Math.min(after, 5) * 1000 : 1000 * (i + 1))
+  }
+}
+
+/** Runs fn over items with at most `limit` in flight, keeping order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
 export async function refreshAccessToken(
   f: typeof fetch,
   clientId: string,
@@ -33,8 +75,8 @@ export async function fetchClassroomProfile(
   f: typeof fetch,
   token: string,
 ): Promise<{ email: string; verifiedTeacher: boolean; canCreateCourses: boolean }> {
-  const res = await f('https://classroom.googleapis.com/v1/userProfiles/me', { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`Google Classroom returned ${res.status} for userProfiles/me`)
+  const res = await getWithRetry(f, 'https://classroom.googleapis.com/v1/userProfiles/me', token)
+  if (!res.ok) throw await googleError(res, 'userProfiles/me')
   const p = (await res.json()) as { emailAddress?: string; verifiedTeacher?: boolean; permissions?: { permission?: string }[] }
   if (!p.emailAddress) throw new Error('Google Classroom did not return an email for this account')
   return {
@@ -60,7 +102,14 @@ export async function fetchHostedDomain(f: typeof fetch, token: string): Promise
   }
 }
 
-export type ImportCourse = { id: string; name: string; section: string; students: { email: string; name: string }[] }
+/**
+ * hidden_emails = students Google listed without an email (directory/contact-sharing settings). They can't be
+ * matched to an Oasis account, and import_classroom_for won't unenroll anyone from a course that has them.
+ */
+export type ImportCourse = { id: string; name: string; section: string; students: { email: string; name: string }[]; hidden_emails: number }
+
+/** import_classroom_for takes at most this many courses. */
+export const MAX_COURSES = 100
 
 const API = 'https://classroom.googleapis.com/v1'
 
@@ -69,10 +118,8 @@ async function getAll<T>(f: typeof fetch, token: string, path: string, key: stri
   let pageToken = ''
   for (let i = 0; i < 50; i++) {
     const sep = path.includes('?') ? '&' : '?'
-    const res = await f(`${API}${path}${sep}pageSize=100${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) throw new Error(`Google Classroom returned ${res.status} for ${path.split('?')[0]}`)
+    const res = await getWithRetry(f, `${API}${path}${sep}pageSize=100${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, token)
+    if (!res.ok) throw await googleError(res, path.split('?')[0])
     const page = (await res.json()) as Record<string, unknown>
     out.push(...((page[key] as T[] | undefined) ?? []))
     pageToken = (page.nextPageToken as string | undefined) ?? ''
@@ -81,25 +128,42 @@ async function getAll<T>(f: typeof fetch, token: string, path: string, key: stri
   return out
 }
 
-type GCourse = { id: string; name: string; section?: string }
+type GCourse = { id: string; name: string; section?: string; updateTime?: string; creationTime?: string }
 type GStudent = { profile: { emailAddress?: string; name?: { fullName?: string } } }
 
-/** Every active course the teacher teaches, with its students. */
+/**
+ * The teacher's active courses with their students: the MAX_COURSES most recently updated (teachers rarely
+ * archive, so veterans can have hundreds). Roster reads go 5 at a time to stay under Classroom's quotas.
+ */
 export async function fetchClassroomRosters(f: typeof fetch, token: string): Promise<ImportCourse[]> {
-  const courses = await getAll<GCourse>(f, token, '/courses?teacherId=me&courseStates=ACTIVE', 'courses')
-  return Promise.all(
-    courses.map(async (c) => {
-      const students = await getAll<GStudent>(f, token, `/courses/${encodeURIComponent(c.id)}/students`, 'students')
-      return {
-        id: c.id,
-        name: c.name,
-        section: c.section ?? '',
-        students: students
-          .filter((s) => s.profile.emailAddress)
-          .map((s) => ({ email: s.profile.emailAddress!, name: s.profile.name?.fullName ?? '' })),
-      }
-    }),
+  const courses = (await getAll<GCourse>(f, token, '/courses?teacherId=me&courseStates=ACTIVE', 'courses'))
+    .sort((a, b) => (b.updateTime ?? b.creationTime ?? '').localeCompare(a.updateTime ?? a.creationTime ?? ''))
+    .slice(0, MAX_COURSES)
+  return mapLimit(courses, 5, async (c) => {
+    const students = await getAll<GStudent>(f, token, `/courses/${encodeURIComponent(c.id)}/students`, 'students')
+    const withEmail = students.filter((s) => s.profile?.emailAddress)
+    return {
+      id: c.id,
+      name: c.name,
+      section: c.section ?? '',
+      students: withEmail.map((s) => ({ email: s.profile.emailAddress!, name: s.profile.name?.fullName ?? '' })),
+      hidden_emails: students.length - withEmail.length,
+    }
+  })
+}
+
+/**
+ * Coursework in this course that already links to `link`, if any. Classroom has no idempotency key, so this is
+ * how a retry after a lost response avoids posting the same assignment twice.
+ */
+export async function findCourseworkByLink(f: typeof fetch, token: string, courseId: string, link: string): Promise<string | null> {
+  const cws = await getAll<{ id: string; materials?: { link?: { url?: string } }[] }>(
+    f,
+    token,
+    `/courses/${encodeURIComponent(courseId)}/courseWork?courseWorkStates=PUBLISHED&courseWorkStates=DRAFT&orderBy=updateTime%20desc`,
+    'courseWork',
   )
+  return cws.find((c) => c.materials?.some((m) => m.link?.url === link))?.id ?? null
 }
 
 export type CourseworkInput = { title: string; description: string; link: string; dueAt: string | null }
@@ -127,8 +191,9 @@ export async function createCoursework(f: typeof fetch, token: string, courseId:
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const out = (await res.json().catch(() => ({}))) as { id?: string; error?: { message?: string } }
-  if (!res.ok || !out.id) throw new Error(`Google Classroom couldn't post the assignment (${res.status}${out.error?.message ? `: ${out.error.message}` : ''})`)
+  if (!res.ok) throw await googleError(res, 'the assignment')
+  const out = (await res.json().catch(() => ({}))) as { id?: string }
+  if (!out.id) throw new Error(`Google Classroom didn't return an id for the new assignment (${res.status})`)
   return out.id
 }
 

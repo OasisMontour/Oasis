@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { invokeFn } from '../lib/invokeFn'
 import { formatTime } from '../lib/time'
 import { aiRunMessage, runAiGrading, type AiBatch } from '../lib/aiGrade'
 import {
@@ -127,10 +128,10 @@ export function AssignmentResults() {
     setSending(true)
     setNotice(null)
     setInfo(null)
-    const { data: res, error: err } = await supabase.functions.invoke<
+    const { data: res, error: err } = await invokeFn<
       | { ok: true; pushed: number; not_in_classroom: string[]; needs_grading?: string[]; failed: { email: string; error: string }[] }
       | { ok: false; error: string }
-    >('classroom', { body: { action: 'push_grades', assignment_id: id } })
+    >('classroom', { action: 'push_grades', assignment_id: id })
     setSending(false)
     if (err || !res) return setNotice(`Couldn't send grades to Google Classroom. ${err?.message ?? ''}`.trim())
     if (!res.ok) {
@@ -157,7 +158,7 @@ export function AssignmentResults() {
     setAiRunning('Grading with AI…')
     const run = await runAiGrading(
       async () => {
-        const { data: res, error: err } = await supabase.functions.invoke<AiBatch>('ai-grade', { body: { assignment_id: id } })
+        const { data: res, error: err } = await invokeFn<AiBatch>('ai-grade', { assignment_id: id })
         return err || !res ? null : res
       },
       (p) => {

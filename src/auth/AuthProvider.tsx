@@ -90,6 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const connectClassroom = async (returnTo = '/teacher') => {
+    // If Supabase's Redirect URLs don't allow this path, it silently sends Google's reply to the Site URL and the
+    // ?classroom=1 below is lost. This copy survives that, so SignIn can still route back here.
+    sessionStorage.setItem(INTENT_KEY, returnTo)
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -113,6 +116,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
+}
+
+const INTENT_KEY = 'oasis.classroomIntent'
+
+/** Where a pending Classroom connect wanted to land, without clearing it. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function peekClassroomIntent(): string | null {
+  return sessionStorage.getItem(INTENT_KEY)
+}
+
+/** True (and cleared) if a Classroom connect was started for `path` and hasn't been handled yet. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function takeClassroomIntent(path: string): boolean {
+  if (sessionStorage.getItem(INTENT_KEY) !== path) return false
+  sessionStorage.removeItem(INTENT_KEY)
+  return true
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

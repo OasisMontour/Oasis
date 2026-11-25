@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../auth/AuthProvider'
+import { peekClassroomIntent, useAuth } from '../auth/AuthProvider'
 import { rememberNext, takeNext } from '../lib/next'
 
 export function SignIn() {
@@ -17,14 +17,18 @@ export function SignIn() {
   useEffect(() => {
     if (!signedIn || !profile || redirected.current) return
     redirected.current = true
+    // Back from a Classroom connect that Supabase sent to the Site URL instead of where we asked:
+    // go where it was meant to land. That page reads (and clears) the intent.
+    const intent = peekClassroomIntent()
+    if (intent && session?.provider_refresh_token) return navigate(intent, { replace: true })
     navigate(takeNext(profile.role), { replace: true })
-  }, [signedIn, profile, navigate])
+  }, [signedIn, profile, session, navigate])
 
   if (signedIn) return null
 
   return (
     <main className="signin">
-      <h1>Oasis</h1>
+      <h1 className="signin-brand"><img src="/logo.svg" alt="" width={48} height={48} />Oasis</h1>
       <p className="muted">Video lessons your students actually watch.</p>
       <button
         className="primary"

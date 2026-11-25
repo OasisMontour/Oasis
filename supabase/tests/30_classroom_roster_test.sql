@@ -89,4 +89,19 @@ commit;
 select tests.ok(not exists (select 1 from classes where google_course_id = 'squat'), 'no class was created by the forged import');
 select tests.ok(not exists (select 1 from pg_proc where proname = 'import_classroom'), 'old client-callable import_classroom is gone');
 
+-- Google hid some emails: nobody is unenrolled from that course. Classes up to 1000 students import.
+begin;
+set local role authenticated;
+select tests.become('00000000-0000-0000-0000-0000000000a1');
+select tests.import_as_me('[{"id":"gc-9","name":"Physics","students":[{"email":"s3@district.org","name":"S3"}]}]');
+select tests.import_as_me('[{"id":"gc-9","name":"Physics","students":[],"hidden_emails":2}]') as h \gset
+select tests.ok((:'h'::jsonb ->> 'removed')::int = 0 and exists (select 1 from enrollments e join classes c on c.id = e.class_id
+  where c.google_course_id = 'gc-9' and e.student_id = '00000000-0000-0000-0000-0000000000b3'), 'hidden emails never unenroll anyone');
+select tests.import_as_me('[{"id":"gc-9","name":"Physics","students":[]}]') as h2 \gset
+select tests.ok((:'h2'::jsonb ->> 'removed')::int = 1, 'a full roster without the student still removes them');
+select tests.ok((tests.import_as_me(jsonb_build_array(jsonb_build_object('id','gc-10','name','Big','students',
+  (select jsonb_agg(jsonb_build_object('email', 'k' || i || '@district.org')) from generate_series(1, 900) i)))) ->> 'created')::int = 1,
+  'a 900-student class imports');
+rollback;
+
 \echo 'ALL CLASSROOM ROSTER TESTS PASSED'

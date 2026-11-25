@@ -47,7 +47,7 @@ export type TeacherVia = 'allowlist' | 'verified_teacher' | 'admin'
 
 export type AdminAudit = {
   actor: string
-  action: 'add_teacher' | 'remove_teacher' | 'approve_teacher' | 'deny_teacher' | 'unblock_teacher' | 'add_domain' | 'remove_domain'
+  action: 'add_teacher' | 'remove_teacher' | 'approve_teacher' | 'deny_teacher' | 'unblock_teacher' | 'add_domain' | 'remove_domain' | 'ai_on' | 'ai_off'
   target: string
   detail: string
   at: string

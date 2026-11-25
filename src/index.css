@@ -119,3 +119,9 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .legal-footer nav { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .legal-footer a { color: var(--muted); }
 @media print { .legal-footer, .legal .bar { display: none; } }
+
+/* logo */
+.brand { display: inline-flex; align-items: center; gap: 8px; }
+.brand img { display: block; flex: none; }
+.signin-brand { display: inline-flex; align-items: center; justify-content: center; gap: 12px; }
+.signin-brand img { display: block; }

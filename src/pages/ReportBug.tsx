@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import { reportPage, STATUS_LABEL, type MyBug } from '../lib/bugs'
+import Brand from '../components/Brand'
 
 // Anyone signed in can report a bug. The server ranks it and rate limits it.
 export function ReportBug() {
@@ -43,7 +44,7 @@ export function ReportBug() {
   return (
     <main className="page narrow">
       <header className="bar">
-        <strong>Oasis</strong>
+        <Brand />
         <Link to="/changelog">What we fixed</Link>
         <Link className="button" to={page || home}>Back</Link>
       </header>
