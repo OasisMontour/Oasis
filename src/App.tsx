@@ -14,6 +14,7 @@ import { ReportBug } from './pages/ReportBug'
 import { Changelog } from './pages/Changelog'
 import { TeacherSignup } from './pages/TeacherSignup'
 import { LegalFooter } from './components/LegalFooter'
+import { BetaBanner } from './components/BetaBanner'
 import { LEGAL_DOCS, type LegalDocId } from './legal/docs'
 
 const Legal = lazy(() => import('./pages/Legal'))
@@ -22,6 +23,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <BetaBanner />
         <Routes>
           <Route path="/" element={<SignIn />} />
           {/* Any signed-in account; the server decides whether it becomes a teacher. */}

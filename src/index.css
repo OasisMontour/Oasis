@@ -118,4 +118,7 @@ blockquote.short { margin: 4px 0; padding: 6px 10px; background: var(--bg); bord
 .legal-footer { padding: 24px 16px; text-align: center; font-size: .875rem; }
 .legal-footer nav { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .legal-footer a { color: var(--muted); }
-@media print { .legal-footer, .legal .bar { display: none; } }
+.beta-banner { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 4px 12px; font-size: .8rem; line-height: 1.4;
+  color: var(--muted); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); border-bottom: 1px solid #dde4e2; }
+.beta-pill { font-weight: 600; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #fff; background: var(--accent); padding: 1px 6px; border-radius: 999px; }
+@media print { .legal-footer, .legal .bar, .beta-banner { display: none; } }
