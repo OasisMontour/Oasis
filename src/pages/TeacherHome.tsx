@@ -57,26 +57,29 @@ export function TeacherHome() {
         {isAdmin && <Link className="button" to="/admin">Admin</Link>}
         <button onClick={signOut}>Sign out</button>
       </header>
-      <h1>Welcome, {profile?.name || 'teacher'}</h1>
       {error && <p className="error" role="alert">{error}</p>}
 
-      <section>
+      <div className="teacher-grid">
+      <section aria-labelledby="lessons-h">
         <div className="section-head">
-          <h2>Lessons</h2>
+          <div>
+            {profile?.name && <p className="eyebrow">{profile.name}</p>}
+            <h1 id="lessons-h">Lessons {loaded && lessons.length > 0 && <span className="count">{lessons.length}</span>}</h1>
+          </div>
           <span className="row">
             <Link className="button" to="/teacher/lessons/new?from=edpuzzle">Bring over an Edpuzzle</Link>
             <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
           </span>
         </div>
-        {loaded && lessons.length === 0 && <p className="muted">No lessons yet. Paste a YouTube link to make your first one.</p>}
-        <ul className="cards">
+        {loaded && lessons.length === 0 && <p className="empty">No lessons yet. Paste a YouTube link to make your first one.</p>}
+        <ul className="cards" hidden={lessons.length === 0}>
           {lessons.map((l) => (
             <LessonCard key={l.id} lesson={l} classes={classes} onChange={load} onError={setError} />
           ))}
         </ul>
       </section>
 
-      <section>
+      <aside>
         <div className="section-head">
           <h2>Classes</h2>
           <span className="row">
@@ -90,10 +93,10 @@ export function TeacherHome() {
           </span>
         </div>
         {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
-        {loaded && classes.length === 0 && <p className="muted">No classes yet. Your classes and students come from Google Classroom: connect it above and they'll show up here.</p>}
-        <ul className="cards">
+        {loaded && classes.length === 0 && <p className="empty small">No classes yet. Your classes and students come from Google Classroom: connect it above and they'll show up here.</p>}
+        <ul className="cards" hidden={classes.length === 0}>
           {classes.map((c) => (
-            <li key={c.id} className="card row">
+            <li key={c.id}>
               <strong>{c.name}</strong>
               <span className="muted small">
                 {c.roster_entries[0]?.count ?? 0} students, {c.enrollments[0]?.count ?? 0} signed in
@@ -101,7 +104,8 @@ export function TeacherHome() {
             </li>
           ))}
         </ul>
-      </section>
+      </aside>
+      </div>
     </main>
   )
 }
@@ -167,11 +171,13 @@ function LessonCard({
 
   return (
     <li className="card">
-      <div className="row">
+      <div className="lesson-head">
         <strong>{lesson.title}</strong>
-        {lesson.subject && <span className="muted small">{lesson.subject}</span>}
-        <span className="muted small">{nQuestions} question{nQuestions === 1 ? '' : 's'}</span>
-        <Link to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
+        <Link className="edit" to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
+      </div>
+      <div className="lesson-meta">
+        {lesson.subject && <span>{lesson.subject}</span>}
+        <span className={nQuestions === 0 ? 'error' : undefined}>{nQuestions} question{nQuestions === 1 ? '' : 's'}</span>
       </div>
       {lesson.assignments.length > 0 && (
         <ul className="assigned small">
@@ -193,7 +199,7 @@ function LessonCard({
         </ul>
       )}
       {open.length > 0 && (
-        <form className="row" onSubmit={assign}>
+        <form className="row lesson-assign" onSubmit={assign}>
           <select aria-label="Class" value={classId} onChange={(e) => setClassId(e.target.value)}>
             <option value="">Assign to class…</option>
             {open.map((c) => (

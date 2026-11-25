@@ -330,7 +330,8 @@ export function LessonBuilder() {
 
       {fromEdpuzzle && <section>{importPanel}</section>}
 
-      <section className="stack">
+      <div className="builder-grid">
+      <section className="stack builder-media">
         <label>
           YouTube link
           <span className="row">
@@ -342,28 +343,29 @@ export function LessonBuilder() {
         {videoError && <p className="error">{videoError}</p>}
         <div ref={playerEl} className="video" hidden={!youtubeId} />
         {duration !== null && <p className="muted small">Video length {formatTime(duration)}</p>}
-
-        <label>
-          Title
-          <input className="text" value={title} maxLength={200} onChange={(e) => { setTitle(e.target.value); touch() }} />
-        </label>
-        <label>
-          Subject
-          <input className="text" value={subject} onChange={(e) => { setSubject(e.target.value); touch() }} placeholder="Biology" />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={fullscreen} onChange={(e) => { setFullscreen(e.target.checked); touch() }} />
-          Students must watch fullscreen (pauses and flags them if they leave)
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={aiGrade} onChange={(e) => { setAiGrade(e.target.checked); touch() }} />
-          Suggest grades for short answers with AI (you can always change them)
-        </label>
+        <div className="builder-settings stack">
+          <label>
+            Title
+            <input className="text" value={title} maxLength={200} onChange={(e) => { setTitle(e.target.value); touch() }} />
+          </label>
+          <label>
+            Subject
+            <input className="text" value={subject} onChange={(e) => { setSubject(e.target.value); touch() }} placeholder="Biology" />
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={fullscreen} onChange={(e) => { setFullscreen(e.target.checked); touch() }} />
+            Students must watch fullscreen (pauses and flags them if they leave)
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={aiGrade} onChange={(e) => { setAiGrade(e.target.checked); touch() }} />
+            Suggest grades for short answers with AI (you can always change them)
+          </label>
+        </div>
       </section>
 
       <section>
         <div className="section-head">
-          <h2>Questions ({questions.length})</h2>
+          <h2>Questions <span className="count">{questions.length}</span></h2>
           <span className="row">
             <button onClick={() => addQuestion('mc')} disabled={!duration}>+ Multiple choice here</button>
             <button onClick={() => addQuestion('short')} disabled={!duration}>+ Short answer here</button>
@@ -448,6 +450,7 @@ export function LessonBuilder() {
           <button onClick={addBulk} disabled={!bulkText.trim()}>Add these questions</button>
         </details>
       </section>
+      </div>
     </main>
   )
 }

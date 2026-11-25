@@ -24,31 +24,46 @@ export function SignIn() {
 
   return (
     <main className="signin">
-      <h1 className="signin-brand"><img src="/logo.svg" alt="" width={48} height={48} />Oasis</h1>
-      <p className="muted">Video lessons your students actually watch.</p>
-      <button
-        className="primary"
-        disabled={loading}
-        onClick={() => signInWithGoogle().catch((e: Error) => setError(e.message))}
-      >
-        Sign in with Google
-      </button>
-      {error && (
-        <p className="error" role="alert">
-          Sign-in failed: {error}. If you're a student, your school may need to approve Oasis. Ask your teacher.
-        </p>
-      )}
-      <p className="muted small">Use your school Google account.</p>
-      <p className="small">
-        Teacher, new to Oasis?{' '}
-        <button className="link" disabled={loading} onClick={() => connectClassroom('/teacher/signup').catch((e: Error) => setError(e.message))}>
-          Sign up with Google Classroom
+      <div className="signin-hero">
+        <p className="signin-brand brand"><img src="/logo.svg" alt="" width={40} height={40} />Oasis</p>
+        <p className="lede">Video lessons your students <em>actually watch.</em></p>
+        <ul className="facts">
+          <li>Questions pause the video. No skipping ahead.</li>
+          <li>Assign and grade straight from Google Classroom.</li>
+          <li>Bring your Edpuzzle lessons with you.</li>
+        </ul>
+        <svg className="waves" viewBox="0 0 600 120" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 70 q37.5 -22 75 0 t75 0 t75 0 t75 0 t75 0 t75 0 t75 0 t75 0 V120 H0 Z" fill="#0a5754" />
+          <path d="M0 92 q37.5 -18 75 0 t75 0 t75 0 t75 0 t75 0 t75 0 t75 0 t75 0" fill="none" stroke="#9fe3d6" strokeWidth="5" strokeLinecap="round" />
+        </svg>
+      </div>
+      <div className="signin-panel">
+        <h1>Sign in</h1>
+        <p className="muted">Use your school Google account.</p>
+        <button
+          className="primary"
+          disabled={loading}
+          onClick={() => signInWithGoogle().catch((e: Error) => setError(e.message))}
+        >
+          Sign in with Google
         </button>
-      </p>
-      <p className="muted small">
-        By signing in you agree to the <Link to="/terms">Terms of Use</Link> and <Link to="/privacy">Privacy Policy</Link>.
-        Students: <Link to="/student-privacy">how Oasis uses your information</Link>.
-      </p>
+        {error && (
+          <p className="error" role="alert">
+            Sign-in failed: {error}. If you're a student, your school may need to approve Oasis. Ask your teacher.
+          </p>
+        )}
+        <hr className="divider" />
+        <p className="small">
+          Teacher, new to Oasis?{' '}
+          <button className="link" disabled={loading} onClick={() => connectClassroom('/teacher/signup').catch((e: Error) => setError(e.message))}>
+            Sign up with Google Classroom
+          </button>
+        </p>
+        <p className="muted small">
+          By signing in you agree to the <Link to="/terms">Terms of Use</Link> and <Link to="/privacy">Privacy Policy</Link>.
+          Students: <Link to="/student-privacy">how Oasis uses your information</Link>.
+        </p>
+      </div>
     </main>
   )
 }
