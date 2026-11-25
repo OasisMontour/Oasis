@@ -33,6 +33,8 @@ export function LessonBuilder() {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
+  // A bad or someone else's lesson id: show an error, not an empty form that would fail (or create a copy) on Save.
+  const [loadFailed, setLoadFailed] = useState(false)
 
   const playerEl = useRef<HTMLDivElement>(null)
   const player = useRef<YTPlayer | null>(null)
@@ -47,7 +49,7 @@ export function LessonBuilder() {
         .eq('id', id)
         .single()
       setLoading(false)
-      if (error || !data) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+      if (error || !data) return setLoadFailed(true)
       setTitle(data.title)
       setSubject(data.subject)
       setVideoInput(`https://youtu.be/${data.youtube_id}`)
@@ -176,16 +178,21 @@ export function LessonBuilder() {
   const addImport = (text = importText, ytOverride: string | null = null) => {
     const r = parseEdpuzzlePaste(text)
     if (ytOverride) r.youtubeId = ytOverride
-    const needAnswer = r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length
-    setImportNote({ added: r.questions.length, needAnswer, warnings: r.warnings })
+    // Pasting the same questions twice (easy to do) shouldn't double them up.
+    const have = new Set(questions.map((q) => `${q.at_s}|${q.prompt.trim()}`))
+    const fresh = r.questions.filter((q) => !have.has(`${q.at_s}|${q.prompt.trim()}`))
+    const dupes = r.questions.length - fresh.length
+    const warnings = dupes ? [...r.warnings, `Skipped ${dupes} question${dupes === 1 ? '' : 's'} already in this lesson.`] : r.warnings
+    const needAnswer = fresh.filter((q) => q.kind === 'mc' && q.correct_index === null).length
+    setImportNote({ added: fresh.length, needAnswer, warnings })
     if (r.youtubeId && !youtubeId) {
       setVideoInput(`https://youtu.be/${r.youtubeId}`)
       setVideoError(null)
       setDuration(null)
       setYoutubeId(r.youtubeId)
     }
-    if (!r.questions.length) return
-    setQuestions((qs) => [...qs, ...r.questions.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
+    if (!fresh.length) return
+    setQuestions((qs) => [...qs, ...fresh.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
     setImportText('')
     setSource('edpuzzle')
     touch()
@@ -306,7 +313,7 @@ export function LessonBuilder() {
         <div role="status" className="stack small">
           {fromBookmarklet && <p className="muted">Brought over from your Edpuzzle page. Check every question before you save.</p>}
           <p className={importNote.added ? 'ok' : 'error'}>
-            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : 'No questions found.'}
+            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : importNote.warnings.some((w) => w.startsWith('Skipped')) ? 'Nothing new to add.' : 'No questions found.'}
             {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
             {importNote.added > 0 && !youtubeId && ' Now paste the YouTube link at the top.'}
           </p>
@@ -317,6 +324,19 @@ export function LessonBuilder() {
   )
 
   if (loading) return <p className="muted center">Loading…</p>
+  if (loadFailed)
+    return (
+      <main className="page builder">
+        <header className="bar">
+          <Link to="/teacher">← Back</Link>
+          <strong>Edit lesson</strong>
+        </header>
+        <p className="error" role="alert">
+          Couldn't open that lesson. It may have been deleted, the link may be wrong, or it belongs to another teacher.
+        </p>
+        <p><Link className="button" to="/teacher">Back to your lessons</Link></p>
+      </main>
+    )
 
   return (
     <main className="page builder">
