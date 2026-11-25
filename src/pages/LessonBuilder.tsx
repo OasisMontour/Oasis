@@ -89,8 +89,15 @@ export function LessonBuilder() {
               const check = () => {
                 if (cancelled) return
                 const d = p.getDuration()
-                if (d > 0) setDuration(Math.floor(d))
-                else if (++tries < 20) setTimeout(check, 250)
+                if (d > 0) {
+                  // For a live stream getDuration() is the time elapsed so far, so it keeps growing. Students could
+                  // never reach the end, so check again after a moment.
+                  setTimeout(() => {
+                    if (cancelled) return
+                    if (p.getDuration() > d + 1) setVideoError("That's a live stream. Use the video once the stream has ended.")
+                    else setDuration(Math.floor(d))
+                  }, 2500)
+                } else if (++tries < 20) setTimeout(check, 250)
                 else setVideoError("Couldn't read this video's length. Live streams can't be used.")
               }
               check()
