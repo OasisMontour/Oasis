@@ -24,12 +24,15 @@ export function LessonBuilder() {
   const [videoError, setVideoError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
+  const [shared, setShared] = useState(false)
+  const copyId = isNew ? searchParams.get('copy') : null
+  const starterId = isNew ? searchParams.get('starter') : null
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
   const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
-  const [loading, setLoading] = useState(!isNew)
+  const [loading, setLoading] = useState(Boolean(id || copyId || starterId))
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -39,15 +42,32 @@ export function LessonBuilder() {
 
   // ---- load an existing lesson
   useEffect(() => {
-    if (isNew) return
+    if (!id && !copyId && !starterId) return
+    let active = true
     ;(async () => {
-      const { data, error } = await supabase
-        .from('lessons')
-        .select('id, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
-        .eq('id', id)
-        .single()
+      if (starterId) {
+        const { data, error } = await supabase.from('starter_lessons').select('*').eq('id', starterId).single()
+        if (!active) return
+        setLoading(false)
+        if (error || !data) return setStatus({ kind: 'error', text: 'Could not load this starter lesson.' })
+        setTitle(data.title)
+        setSubject(data.subject)
+        setVideoInput('https://youtu.be/' + data.youtube_id)
+        setYoutubeId(data.youtube_id)
+        setQuestions((data.questions as DraftQuestion[]).map(toDraft))
+        setDirty(true)
+        return
+      }
+      let query = supabase.from('lessons')
+        .select('id, shared, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
+        .eq('id', copyId || id)
+      if (copyId) query = query.eq('shared', true)
+      const { data, error } = await query.single()
+      if (!active) return
       setLoading(false)
       if (error || !data) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+      setShared(!copyId && data.shared)
+      setDirty(Boolean(copyId))
       setTitle(data.title)
       setSubject(data.subject)
       setVideoInput(`https://youtu.be/${data.youtube_id}`)
@@ -58,9 +78,10 @@ export function LessonBuilder() {
       const qs = [...(data.questions as (DraftQuestion & { id: string; position: number })[])].sort(
         (a, b) => a.at_s - b.at_s || a.position - b.position,
       )
-      setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [] })))
     })()
-  }, [id, isNew])
+    return () => { active = false }
+  }, [id, copyId, starterId])
 
   // ---- warn before leaving with unsaved edits
   useEffect(() => {
@@ -230,6 +251,7 @@ export function LessonBuilder() {
         id: id ?? null,
         title: title.trim(),
         subject: subject.trim(),
+        shared,
         youtube_id: youtubeId,
         duration_s: duration,
         require_fullscreen: fullscreen,
@@ -328,6 +350,7 @@ export function LessonBuilder() {
       </header>
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
 
+      <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} /> Share this lesson and its questions with other Oasis teachers</label>
       {fromEdpuzzle && <section>{importPanel}</section>}
 
       <section className="stack">
