@@ -17,8 +17,14 @@ export function StudentHome() {
   const [error, setError] = useState<string | null>(null)
   // A teacher whose access an admin removed lands here as a student. Tell them, instead of "no classes, personal Gmail?".
   const [removed, setRemoved] = useState(false)
+  // Same for a teacher whose sign-up is still waiting for an admin: RequireRole sends them here from /teacher.
+  const [pending, setPending] = useState(false)
   useEffect(() => {
-    supabase.rpc('my_teacher_request').then(({ data }) => setRemoved((data as MyRequest | null)?.removed === true))
+    supabase.rpc('my_teacher_request').then(({ data }) => {
+      const r = data as MyRequest | null
+      setRemoved(r?.removed === true)
+      setPending(r?.status === 'pending' && !r.removed && !r.blocked)
+    })
   }, [])
 
   const load = useCallback(() => {
@@ -61,6 +67,14 @@ export function StudentHome() {
           </div>
         )}
 
+        {pending && (
+          <div className="s-alert" role="status">
+            <strong>Your teacher sign-up is waiting for a quick check.</strong> The Oasis team approves new teachers by hand. Once
+            you're approved, sign in again and you'll go straight to your teacher dashboard.{' '}
+            <Link to="/teacher/signup">See your sign-up</Link>
+          </div>
+        )}
+
         {error && (
           <p className="s-alert" role="alert">
             Couldn't load your assignments. Check your Wi-Fi.{' '}
@@ -71,7 +85,7 @@ export function StudentHome() {
         )}
         {!rows && !error && <p className="s-muted">Loading…</p>}
 
-        {rows && classCount === 0 && !removed && (
+        {rows && classCount === 0 && !removed && !pending && (
           <div className="s-empty">
             <h2>No classes found</h2>
             <p>

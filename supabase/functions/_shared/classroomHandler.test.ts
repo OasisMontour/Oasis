@@ -16,6 +16,9 @@ function setup(
     hd?: string | null
     verified?: boolean
     claim?: ClaimResult
+    existingCoursework?: { id: string; materials?: { link?: { url?: string } }[] }[]
+    profileStatus?: number
+    importFails?: boolean
   } = {},
 ) {
   const claims: TeacherEvidence[] = []
@@ -54,6 +57,9 @@ function setup(
       patched.push({ url, body: JSON.parse(String(init.body)) })
       return Response.json({})
     }
+    if (url.includes('/courseWork?')) return Response.json({ courseWork: opts.existingCoursework ?? [] })
+    if (url.endsWith('/userProfiles/me') && opts.profileStatus)
+      return Response.json({ error: { status: 'PERMISSION_DENIED', message: 'The Classroom API is disabled for this domain.' } }, { status: opts.profileStatus })
     if (url.endsWith('/userProfiles/me'))
       return Response.json({ emailAddress: opts.googleEmail ?? 'T@d.org', verifiedTeacher: opts.verified ?? false, permissions: [{ permission: 'CREATE_COURSE' }] })
     if (url.startsWith('https://openidconnect.googleapis.com/v1/userinfo')) return Response.json(opts.hd === null ? { email: 'x' } : { email: 'x', hd: opts.hd ?? 'd.org' })
@@ -76,6 +82,7 @@ function setup(
     markUsed: async () => {},
     importClassroom: async (teacherId, courses) => {
       expect(teacherId).toBe('teacher-1')
+      if (opts.importFails) throw new Error('too many courses')
       imported.push(courses)
       return { created: 1, updated: 0, newly_enrolled: 0, removed: 0, skipped: [] }
     },
@@ -98,7 +105,7 @@ describe('classroom edge function', () => {
     const enc = t.store.get('teacher-1')!
     expect(enc).not.toContain('good-refresh')
     expect(await decryptToken(enc, KEY, 'teacher-1')).toBe('good-refresh')
-    expect(t.imported).toEqual([[{ id: 'gc1', name: 'Bio', section: 'P2', students: [{ email: 'kid@d.org', name: 'Kid' }] }]])
+    expect(t.imported).toEqual([[{ id: 'gc1', name: 'Bio', section: 'P2', students: [{ email: 'kid@d.org', name: 'Kid' }], hidden_emails: 0 }]])
   })
 
   it('sync uses the stored token', async () => {
@@ -321,5 +328,50 @@ describe('token encryption', () => {
     await expect(decryptToken(enc, OTHER_KEY, 'u1')).rejects.toThrow()
     await expect(decryptToken(enc, KEY, 'u2')).rejects.toThrow()
     expect(await encryptToken('secret', KEY, 'u1')).not.toBe(enc) // fresh IV each time
+  })
+
+  it('a stored token that no longer decrypts is dropped and the teacher is asked to reconnect', async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', OTHER_KEY, 'teacher-1'))
+    expect((await t.call({ action: 'sync' })).body).toEqual({ ok: false, error: 'reconnect' })
+    expect(t.store.has('teacher-1')).toBe(false)
+  })
+
+  it("disconnect still works when the stored token can't be decrypted", async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', OTHER_KEY, 'teacher-1'))
+    expect((await t.call({ action: 'disconnect' })).body).toEqual({ ok: true })
+    expect(t.store.has('teacher-1')).toBe(false)
+  })
+
+  it("Google refusals come back as 200 with Google's reason, so the page can show it", async () => {
+    const t = setup({ profileStatus: 403 })
+    const r = await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    expect(r.status).toBe(200)
+    expect(r.body).toMatchObject({ ok: false, google_status: 403, google_reason: 'PERMISSION_DENIED' })
+    expect(r.body.error).toContain('The Classroom API is disabled for this domain.')
+  })
+
+  it('a granted sign-up still reports granted if the class import fails afterwards', async () => {
+    const t = setup({ teacher: false, importFails: true })
+    const r = await t.call({ action: 'claim_teacher', refresh_token: 'good-refresh' })
+    expect(r.body).toMatchObject({ ok: true, status: 'granted', import_error: 'too many courses' })
+    expect(t.store.has('teacher-1')).toBe(true)
+  })
+
+  it('reuses coursework a lost earlier response already created instead of posting twice', async () => {
+    const t = setup({ existingCoursework: [{ id: 'cw-old', materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }] }] })
+    t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
+    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: true, coursework_id: 'cw-old' })
+    expect(t.posted).toHaveLength(0)
+    expect(t.asg.courseworkId).toBe('cw-old')
+  })
+
+  it('counts students Google listed without an email instead of silently dropping them', async () => {
+    const t = setup()
+    t.setRoster([{ profile: { emailAddress: 'kid@d.org', name: { fullName: 'Kid' } } }, { profile: { name: { fullName: 'Hidden' } } }])
+    const r = await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    expect(r.body).toMatchObject({ ok: true, students: 1, hidden_emails: 1 })
+    expect((t.imported[0] as { hidden_emails: number }[])[0].hidden_emails).toBe(1)
   })
 })
