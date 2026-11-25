@@ -127,8 +127,17 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
   const storedAccess = async (): Promise<{ token: string } | { res: Response }> => {
     const enc = await d.loadToken(caller.id)
     if (!enc) return { res: json({ ok: false, error: 'not_connected' }) }
+    let refreshToken: string
     try {
-      const t = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, await decryptToken(enc, d.env.encKey, caller.id))
+      refreshToken = await decryptToken(enc, d.env.encKey, caller.id)
+    } catch {
+      // TOKEN_ENCRYPTION_KEY changed or was pasted wrong: this token is unusable, so drop it and ask to reconnect.
+      console.error('classroom: stored token did not decrypt (TOKEN_ENCRYPTION_KEY changed?)')
+      await d.deleteToken(caller.id)
+      return { res: json({ ok: false, error: 'reconnect' }) }
+    }
+    try {
+      const t = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, refreshToken)
       return { token: t.accessToken }
     } catch (e) {
       if (e instanceof InvalidGrantError) {
@@ -192,6 +201,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const asg = await d.getAssignment(auth, id)
       if (!asg) return json({ ok: false, error: 'not your assignment' }, 404)
       if (asg.courseworkId) return json({ ok: true, coursework_id: asg.courseworkId, already: true })
+      if (!d.env.appOrigin) return json({ ok: false, error: 'not_configured' })
       const a = await storedAccess()
       if ('res' in a) return a.res
       const cwid = await createCoursework(d.fetch, a.token, asg.courseId, {
@@ -253,7 +263,9 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     if (body.action === 'disconnect') {
       const enc = await d.loadToken(caller.id)
       if (enc) {
-        await revokeToken(d.fetch, await decryptToken(enc, d.env.encKey, caller.id)).catch(() => undefined)
+        // A token that won't decrypt can't be revoked at Google, but it must still be deleted here.
+        const rt = await decryptToken(enc, d.env.encKey, caller.id).catch(() => null)
+        if (rt) await revokeToken(d.fetch, rt).catch(() => undefined)
         await d.deleteToken(caller.id)
       }
       return json({ ok: true })

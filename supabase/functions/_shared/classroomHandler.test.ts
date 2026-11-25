@@ -136,6 +136,16 @@ describe('classroom edge function', () => {
     expect(t.calls).toContain('https://oauth2.googleapis.com/revoke')
   })
 
+  it('a token encrypted under another key is dropped: sync asks to reconnect, disconnect still deletes', async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', OTHER_KEY, 'teacher-1'))
+    expect((await t.call({ action: 'sync' })).body).toEqual({ ok: false, error: 'reconnect' })
+    expect(t.store.size).toBe(0)
+    t.store.set('teacher-1', await encryptToken('good-refresh', OTHER_KEY, 'teacher-1'))
+    expect((await t.call({ action: 'disconnect' })).body).toEqual({ ok: true })
+    expect(t.store.size).toBe(0)
+  })
+
   it('rejects signed-out callers and students', async () => {
     expect((await setup().call({ action: 'sync' }, '')).status).toBe(401)
     expect((await setup().call({ action: 'sync' }, 'Bearer forged')).status).toBe(401)
