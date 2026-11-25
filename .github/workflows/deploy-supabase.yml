@@ -107,7 +107,10 @@ jobs:
           # TOKEN_ENCRYPTION_KEY: if you didn't give one and Supabase doesn't have one yet, make one here.
           # It's never printed. Never replace it once teachers have connected Classroom (they'd all have to reconnect).
           if [ -z "$TOKEN_ENCRYPTION_KEY" ]; then
-            if supabase secrets list --remote="$PROJECT_REF" | grep -qw TOKEN_ENCRYPTION_KEY; then
+            # If listing fails, stop: guessing "not set" would replace the key and lock every teacher out.
+            names=$(supabase secrets list --remote="$PROJECT_REF") || {
+              echo "::error::Couldn't list Supabase secrets, so TOKEN_ENCRYPTION_KEY was left alone. Re-run the workflow."; exit 1; }
+            if grep -qw TOKEN_ENCRYPTION_KEY <<<"$names"; then
               echo "TOKEN_ENCRYPTION_KEY already set in Supabase, leaving it alone."
             else
               printf 'TOKEN_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> "$f"

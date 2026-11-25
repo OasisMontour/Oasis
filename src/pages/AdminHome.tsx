@@ -74,7 +74,7 @@ export function AdminHome() {
         </ul>
       )}
 
-      {ai && <AiUsage ai={ai} />}
+      {ai && <AiUsage ai={ai} onChange={changed} onError={reportError} />}
 
       <Teachers
         teachers={data?.teachers ?? null}
@@ -90,12 +90,12 @@ export function AdminHome() {
       <AdminAssignments assignments={data?.assignments ?? null} />
 
       <section>
-        <h2>Allowlist changes</h2>
+        <h2>Admin changes</h2>
         {data && data.audit.length === 0 && <p className="muted">No changes made from this page yet.</p>}
         <ul className="assigned">
           {data?.audit.map((x, i) => (
             <li key={i} className="small">
-              <span className="muted">{when(x.at)}</span> {x.actor} {x.action === 'add_teacher' ? 'added' : 'removed'} <strong>{x.target}</strong>
+              <span className="muted">{when(x.at)}</span> {x.actor} {AUDIT_VERB[x.action] ?? x.action} <strong>{x.target}</strong>
               {x.detail && <span className="muted"> ({x.detail})</span>}
             </li>
           ))}
@@ -103,6 +103,19 @@ export function AdminHome() {
       </section>
     </main>
   )
+}
+
+// Every admin_audit action. Anything unknown is shown as-is rather than as the wrong verb.
+const AUDIT_VERB: Record<string, string> = {
+  add_teacher: 'pre-approved',
+  remove_teacher: 'removed teacher',
+  approve_teacher: 'approved',
+  deny_teacher: 'denied',
+  unblock_teacher: 'unblocked',
+  add_domain: 'added trusted domain',
+  remove_domain: 'removed trusted domain',
+  ai_on: 'turned on',
+  ai_off: 'turned off',
 }
 
 function Usage({ usage }: { usage: AdminUsage }) {
@@ -176,13 +189,28 @@ function Usage({ usage }: { usage: AdminUsage }) {
 }
 
 // AI grading spend check. Counts only: which answers were graded and for whom stays on the teachers' results pages.
-function AiUsage({ ai }: { ai: AdminAiUsage }) {
+function AiUsage({ ai, onChange, onError }: { ai: AdminAiUsage; onChange: (msg: string) => Promise<void>; onError: (msg: string) => void }) {
   const pct = ai.global_monthly_cap > 0 ? Math.round((ai.month_answers / ai.global_monthly_cap) * 100) : 0
+  const [busy, setBusy] = useState(false)
+  // The kill switch. Turning it off sends every teacher back to grading short answers by hand.
+  const flip = async () => {
+    if (ai.enabled && !window.confirm('Turn AI grading off for every teacher? Short answers will wait for teachers to grade them by hand.')) return
+    setBusy(true)
+    const { error } = await supabase.rpc('admin_set_ai_enabled', { p_enabled: !ai.enabled })
+    setBusy(false)
+    if (error) return onError(`Couldn't change AI grading: ${error.message}`)
+    await onChange(ai.enabled ? 'AI grading is off for everyone.' : 'AI grading is back on.')
+  }
   return (
     <section>
-      <h2>
-        AI grading <span className={ai.enabled ? 'tag' : 'tag warn'}>{ai.enabled ? 'on' : 'off'}</span>
-      </h2>
+      <div className="section-head">
+        <h2>
+          AI grading <span className={ai.enabled ? 'tag' : 'tag warn'}>{ai.enabled ? 'on' : 'off'}</span>
+        </h2>
+        <button className={ai.enabled ? 'small danger' : 'small primary'} disabled={busy} onClick={flip}>
+          {ai.enabled ? 'Turn AI grading off' : 'Turn AI grading on'}
+        </button>
+      </div>
       <ul className="stats" aria-label="AI grading">
         <Stat label="Answers graded today" value={ai.today_answers} note={`cap ${ai.teacher_daily_cap} per teacher per day`} />
         <Stat label="Answers graded this month" value={ai.month_answers} of={ai.global_monthly_cap} note={`${pct}% of the monthly cap`} />

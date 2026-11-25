@@ -24,30 +24,52 @@ export function LessonBuilder() {
   const [videoError, setVideoError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
+  const [shared, setShared] = useState(false)
+  const copyId = isNew ? searchParams.get('copy') : null
+  const starterId = isNew ? searchParams.get('starter') : null
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
   const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
-  const [loading, setLoading] = useState(!isNew)
+  const [loading, setLoading] = useState(Boolean(id || copyId || starterId))
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
+  // A bad or someone else's lesson id: show an error, not an empty form that would fail (or create a copy) on Save.
+  const [loadFailed, setLoadFailed] = useState(false)
 
   const playerEl = useRef<HTMLDivElement>(null)
   const player = useRef<YTPlayer | null>(null)
 
   // ---- load an existing lesson
   useEffect(() => {
-    if (isNew) return
+    if (!id && !copyId && !starterId) return
+    let active = true
     ;(async () => {
-      const { data, error } = await supabase
-        .from('lessons')
-        .select('id, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
-        .eq('id', id)
-        .single()
+      if (starterId) {
+        const { data, error } = await supabase.from('starter_lessons').select('*').eq('id', starterId).single()
+        if (!active) return
+        setLoading(false)
+        if (error || !data) return setStatus({ kind: 'error', text: 'Could not load this starter lesson.' })
+        setTitle(data.title)
+        setSubject(data.subject)
+        setVideoInput('https://youtu.be/' + data.youtube_id)
+        setYoutubeId(data.youtube_id)
+        setQuestions((data.questions as DraftQuestion[]).map(toDraft))
+        setDirty(true)
+        return
+      }
+      let query = supabase.from('lessons')
+        .select('id, shared, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
+        .eq('id', copyId || id)
+      if (copyId) query = query.eq('shared', true)
+      const { data, error } = await query.single()
+      if (!active) return
       setLoading(false)
       if (error || !data) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+      setShared(!copyId && data.shared)
+      setDirty(Boolean(copyId))
       setTitle(data.title)
       setSubject(data.subject)
       setVideoInput(`https://youtu.be/${data.youtube_id}`)
@@ -58,9 +80,10 @@ export function LessonBuilder() {
       const qs = [...(data.questions as (DraftQuestion & { id: string; position: number })[])].sort(
         (a, b) => a.at_s - b.at_s || a.position - b.position,
       )
-      setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [] })))
     })()
-  }, [id, isNew])
+    return () => { active = false }
+  }, [id, copyId, starterId])
 
   // ---- warn before leaving with unsaved edits
   useEffect(() => {
@@ -89,8 +112,15 @@ export function LessonBuilder() {
               const check = () => {
                 if (cancelled) return
                 const d = p.getDuration()
-                if (d > 0) setDuration(Math.floor(d))
-                else if (++tries < 20) setTimeout(check, 250)
+                if (d > 0) {
+                  // For a live stream getDuration() is the time elapsed so far, so it keeps growing. Students could
+                  // never reach the end, so check again after a moment.
+                  setTimeout(() => {
+                    if (cancelled) return
+                    if (p.getDuration() > d + 1) setVideoError("That's a live stream. Use the video once the stream has ended.")
+                    else setDuration(Math.floor(d))
+                  }, 2500)
+                } else if (++tries < 20) setTimeout(check, 250)
                 else setVideoError("Couldn't read this video's length. Live streams can't be used.")
               }
               check()
@@ -169,16 +199,21 @@ export function LessonBuilder() {
   const addImport = (text = importText, ytOverride: string | null = null) => {
     const r = parseEdpuzzlePaste(text)
     if (ytOverride) r.youtubeId = ytOverride
-    const needAnswer = r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length
-    setImportNote({ added: r.questions.length, needAnswer, warnings: r.warnings })
+    // Pasting the same questions twice (easy to do) shouldn't double them up.
+    const have = new Set(questions.map((q) => `${q.at_s}|${q.prompt.trim()}`))
+    const fresh = r.questions.filter((q) => !have.has(`${q.at_s}|${q.prompt.trim()}`))
+    const dupes = r.questions.length - fresh.length
+    const warnings = dupes ? [...r.warnings, `Skipped ${dupes} question${dupes === 1 ? '' : 's'} already in this lesson.`] : r.warnings
+    const needAnswer = fresh.filter((q) => q.kind === 'mc' && q.correct_index === null).length
+    setImportNote({ added: fresh.length, needAnswer, warnings })
     if (r.youtubeId && !youtubeId) {
       setVideoInput(`https://youtu.be/${r.youtubeId}`)
       setVideoError(null)
       setDuration(null)
       setYoutubeId(r.youtubeId)
     }
-    if (!r.questions.length) return
-    setQuestions((qs) => [...qs, ...r.questions.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
+    if (!fresh.length) return
+    setQuestions((qs) => [...qs, ...fresh.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
     setImportText('')
     setSource('edpuzzle')
     touch()
@@ -230,6 +265,7 @@ export function LessonBuilder() {
         id: id ?? null,
         title: title.trim(),
         subject: subject.trim(),
+        shared,
         youtube_id: youtubeId,
         duration_s: duration,
         require_fullscreen: fullscreen,
@@ -299,7 +335,7 @@ export function LessonBuilder() {
         <div role="status" className="stack small">
           {fromBookmarklet && <p className="muted">Brought over from your Edpuzzle page. Check every question before you save.</p>}
           <p className={importNote.added ? 'ok' : 'error'}>
-            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : 'No questions found.'}
+            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : importNote.warnings.some((w) => w.startsWith('Skipped')) ? 'Nothing new to add.' : 'No questions found.'}
             {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
             {importNote.added > 0 && !youtubeId && ' Now paste the YouTube link at the top.'}
           </p>
@@ -310,6 +346,19 @@ export function LessonBuilder() {
   )
 
   if (loading) return <p className="muted center">Loading…</p>
+  if (loadFailed)
+    return (
+      <main className="page builder">
+        <header className="bar">
+          <Link to="/teacher">← Back</Link>
+          <strong>Edit lesson</strong>
+        </header>
+        <p className="error" role="alert">
+          Couldn't open that lesson. It may have been deleted, the link may be wrong, or it belongs to another teacher.
+        </p>
+        <p><Link className="button" to="/teacher">Back to your lessons</Link></p>
+      </main>
+    )
 
   return (
     <main className="page builder">
@@ -328,6 +377,7 @@ export function LessonBuilder() {
       </header>
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
 
+      <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} /> Share this lesson and its questions with other Oasis teachers</label>
       {fromEdpuzzle && <section>{importPanel}</section>}
 
       <div className="builder-grid">
