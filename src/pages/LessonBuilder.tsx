@@ -67,7 +67,10 @@ export function LessonBuilder() {
       const { data, error } = await query.single()
       if (!active) return
       setLoading(false)
-      if (error || !data) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+      if (error || !data) {
+        if (copyId) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+        return setLoadFailed(true)
+      }
       setShared(!copyId && data.shared)
       setDirty(Boolean(copyId))
       setTitle(data.title)
@@ -377,7 +380,6 @@ export function LessonBuilder() {
       </header>
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
 
-      <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} /> Share this lesson and its questions with other Oasis teachers</label>
       {fromEdpuzzle && <section>{importPanel}</section>}
 
       <div className="builder-grid">
@@ -409,6 +411,10 @@ export function LessonBuilder() {
           <label className="check">
             <input type="checkbox" checked={aiGrade} onChange={(e) => { setAiGrade(e.target.checked); touch() }} />
             Suggest grades for short answers with AI (you can always change them)
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} />
+            Share this lesson and its questions with other Oasis teachers
           </label>
         </div>
       </section>

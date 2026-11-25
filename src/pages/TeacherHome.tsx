@@ -78,6 +78,7 @@ export function TeacherHome() {
             <LessonCard key={l.id} lesson={l} classes={classes} onChange={load} onError={setError} />
           ))}
         </ul>
+        <LessonLibrary />
       </section>
 
       <aside>
@@ -247,16 +248,16 @@ function LessonLibrary() {
     })
     return () => { active = false }
   }, [])
-  return <details className="card">
-    <summary>Lesson library</summary>
-    <label>Search by title or subject <input className="text" value={filter} onChange={e => setFilter(e.target.value)} /></label>
-    {error && <p role="alert">{error}</p>}
-    {!loaded && <p>Loading lessons…</p>}
+  return <details className="card library">
+    <summary>Lesson library <span className="muted small">Starter lessons and ones other teachers shared</span></summary>
+    <label className="library-search">Search by title or subject <input className="text" value={filter} onChange={e => setFilter(e.target.value)} /></label>
+    {error && <p className="error" role="alert">{error}</p>}
+    {!loaded && <p className="muted">Loading lessons…</p>}
     {([['Starter lessons', 'starter', starters], ['Shared by teachers', 'copy', shared]] as const).map(([heading, param, entries]) => {
       const matches = entries.filter(e => (e.title + ' ' + e.subject).toLowerCase().includes(filter.trim().toLowerCase()))
       return <section key={param}><h3>{heading}</h3>
-        {loaded && !error && !matches.length && <p>No matching lessons.</p>}
-        <ul>{matches.map(e => <li key={e.id}><Link to={'/teacher/lessons/new?' + param + '=' + e.id}>Use {e.title}</Link> · {e.subject}</li>)}</ul>
+        {loaded && !error && !matches.length && <p className="muted small">No matching lessons.</p>}
+        <ul className="library-list">{matches.map(e => <li key={e.id}><Link to={'/teacher/lessons/new?' + param + '=' + e.id}>Use {e.title}</Link> · {e.subject}</li>)}</ul>
       </section>
     })}
   </details>
