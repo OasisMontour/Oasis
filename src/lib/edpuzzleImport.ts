@@ -63,6 +63,10 @@ const NOISE = new RegExp(
       'q\\d+',
       'show answers?',
       'hide answers?',
+      // several buttons copied onto one line ("Edit Delete")
+      '(?:(?:edit|delete|duplicate|preview|copy|move)\\s*)+',
+      // page footer
+      '©.*',
     ].join('|') +
     ')$',
   'i',
@@ -86,9 +90,20 @@ export function parseEdpuzzlePaste(text: string): ImportResult {
   const blocks: Block[] = []
   let cur: Block | null = null
 
-  text.split(/\r?\n/).forEach((raw, i) => {
-    const line = raw.replace(/\u00a0/g, ' ').trim()
+  const all = text.split(/\r?\n/).map((raw) => raw.replace(/\u00a0/g, ' ').trim())
+  // Edpuzzle may show a question's type label ("Multiple choice question", "Note") just ABOVE its time.
+  // A label line whose next non-empty line is a timestamp belongs to that next question, not this one.
+  let carry: string | null = null
+  const nextLine = (i: number) => {
+    for (let j = i + 1; j < all.length; j++) if (all[j]) return all[j]
+    return ''
+  }
+  all.forEach((line, i) => {
     if (!line) return
+    if ((NOTE_LABEL.test(line) || OPEN_LABEL.test(line) || MC_LABEL.test(line)) && TIME_LINE.exec(nextLine(i))?.[2] === '') {
+      carry = line
+      return
+    }
 
     // Pick up links wherever they are, and don't treat them as question text.
     const urls = line.match(/https?:\/\/\S+|(?:www\.)?(?:youtube\.com|youtu\.be|edpuzzle\.com)\/\S+/gi)
@@ -105,7 +120,8 @@ export function parseEdpuzzlePaste(text: string): ImportResult {
     if (tm && !tm[2].startsWith('/')) {
       const at = parseTime(tm[1])
       if (at !== null) {
-        cur = { at, startLine: i + 1, lines: tm[2] ? [tm[2]] : [] }
+        cur = { at, startLine: i + 1, lines: [...(carry ? [carry] : []), ...(tm[2] ? [tm[2]] : [])] }
+        carry = null
         blocks.push(cur)
         return
       }

@@ -114,4 +114,22 @@ Correct answer: down`)
     expect(r.questions[0].prompt).toBe('<img src=x onerror=alert(1)>?')
     expect(r.questions[0].choices).toEqual(['<b>a</b>', '<i>b</i>'])
   })
+
+  it('handles type labels shown above the time, button rows and the footer (bookmarklet page text)', () => {
+    const r = parseEdpuzzlePaste(
+      [
+        'Photosynthesis basics', '0:00 / 6:12',
+        'Multiple choice question', '1:05', 'What do plants need for photosynthesis?', 'Sunlight ✓', 'Salt', 'Sand', 'Edit Delete',
+        'Open-ended question', '2:40', 'Explain why leaves change color in fall.', 'Edit',
+        'Multiple choice question', '4:10', 'Where does photosynthesis happen?', 'Mitochondria', 'Chloroplast', 'Nucleus',
+        'Note', '5:00', 'Remember to take notes!', '© Edpuzzle 2026 · Terms · Privacy',
+      ].join('\n'),
+    )
+    expect(r.questions.map((q) => [q.at_s, q.kind, q.prompt, q.choices, q.correct_index])).toEqual([
+      [65, 'mc', 'What do plants need for photosynthesis?', ['Sunlight', 'Salt', 'Sand'], 0],
+      [160, 'short', 'Explain why leaves change color in fall.', [], null],
+      [250, 'mc', 'Where does photosynthesis happen?', ['Mitochondria', 'Chloroplast', 'Nucleus'], null],
+    ])
+    expect(r.warnings.join(' ')).toContain('5:00: skipped an Edpuzzle note')
+  })
 })

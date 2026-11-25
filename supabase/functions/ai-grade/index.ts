@@ -13,6 +13,7 @@
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { handleAiGrade, type ClaimResult, type Provider } from '../_shared/aiGrader.ts'
+import { corsFor, parseOrigins } from '../_shared/cors.ts'
 
 const env = (k: string) => Deno.env.get(k)?.trim() || undefined
 const cap = (k: string, d: number) => {
@@ -67,11 +68,7 @@ const providers = (env('AI_PROVIDER_ORDER') ?? 'cloudflare,groq,cerebras')
   .map((s) => all[s.trim()])
   .filter((p): p is Provider => !!p)
 
-const cors = {
-  'Access-Control-Allow-Origin': env('APP_ORIGIN') ?? '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+const origins = parseOrigins(env('APP_ORIGIN'))
 
 const must = <T>(r: { data: T; error: { message: string } | null }): T => {
   if (r.error) throw new Error(r.error.message)
@@ -79,6 +76,7 @@ const must = <T>(r: { data: T; error: { message: string } | null }): T => {
 }
 
 Deno.serve(async (req) => {
+  const cors = corsFor(origins, req.headers.get('Origin'))
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const res = await handleAiGrade(req, {
     fetch,

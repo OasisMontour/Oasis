@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useAuth } from '../auth/AuthProvider'
+import { takeClassroomIntent, useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
+import { invokeFn } from '../lib/invokeFn'
 import { pendingText, refusedText, type ClaimResponse, type MyRequest } from '../lib/teacherSignup'
 import Brand from '../components/Brand'
 
@@ -31,16 +32,15 @@ export function TeacherSignup() {
     if (!profile || profile.role === 'teacher' || started.current) return
     started.current = true
     ;(async () => {
-      if (params.get('classroom') === '1') {
-        setParams({}, { replace: true })
+      const intent = takeClassroomIntent('/teacher/signup') && !!session?.provider_refresh_token
+      if (params.get('classroom') === '1' || intent) {
+        if (params.get('classroom')) setParams({}, { replace: true })
         const refresh = session?.provider_refresh_token
         if (!refresh) return setView({ kind: 'error', text: "Google didn't send back Classroom access. Try again." })
         setView({ kind: 'working' })
-        const { data, error } = await supabase.functions.invoke<ClaimResponse>('classroom', {
-          body: { action: 'claim_teacher', refresh_token: refresh },
-        })
-        // Same as connecting: drop Google's tokens from this browser; the server keeps its own encrypted copy.
+        // Same as connecting: drop Google's tokens from this browser first; the server keeps its own encrypted copy.
         await supabase.auth.refreshSession().catch(() => undefined)
+        const { data, error } = await invokeFn<ClaimResponse>('classroom', { action: 'claim_teacher', refresh_token: refresh })
         if (error || !data) return setView({ kind: 'error', text: `Sign-up failed. ${error?.message ?? ''}`.trim() })
         if (!data.ok) {
           if (data.error === 'missing_scopes')

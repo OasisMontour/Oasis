@@ -1,8 +1,9 @@
 // Supabase Edge Function: Google Classroom connection + roster sync. Logic lives in _shared/classroomHandler.ts.
-// Secrets (supabase secrets set ...): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY.
+// Secrets (supabase secrets set ...): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, APP_ORIGIN.
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { handleClassroom, type ClaimResult, type SyncResult } from '../_shared/classroomHandler.ts'
+import { corsFor, parseOrigins } from '../_shared/cors.ts'
 
 const url = Deno.env.get('SUPABASE_URL')!
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -12,11 +13,7 @@ const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { au
 const asCaller = (authHeader: string) =>
   createClient(url, anon, { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } })
 
-const cors = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+const origins = parseOrigins(Deno.env.get('APP_ORIGIN'))
 
 const must = <T>(r: { data: T; error: { message: string } | null }): T => {
   if (r.error) throw new Error(r.error.message)
@@ -24,14 +21,22 @@ const must = <T>(r: { data: T; error: { message: string } | null }): T => {
 }
 
 Deno.serve(async (req) => {
+  const cors = corsFor(origins, req.headers.get('Origin'))
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  if (!origins[0]) {
+    // Without it, Classroom links would point nowhere. Say so instead of crashing on the first post.
+    console.error('classroom: APP_ORIGIN secret is not set')
+    return new Response(JSON.stringify({ ok: false, error: 'Oasis server setup: APP_ORIGIN is not set.' }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    })
+  }
   const res = await handleClassroom(req, {
     fetch,
     env: {
       clientId: Deno.env.get('GOOGLE_CLIENT_ID')!,
       clientSecret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
       encKey: Deno.env.get('TOKEN_ENCRYPTION_KEY')!,
-      appOrigin: Deno.env.get('APP_ORIGIN')!,
+      appOrigin: origins[0],
     },
     async getCaller(authHeader) {
       const c = asCaller(authHeader)
@@ -86,7 +91,8 @@ Deno.serve(async (req) => {
       }
     },
     async setCourseworkId(authHeader, id, cwid) {
-      must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id))
+      // Only if still empty, so a late duplicate call can't overwrite the id Classroom students already have.
+      must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id).is('google_coursework_id', null))
     },
   })
   for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)

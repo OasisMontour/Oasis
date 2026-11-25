@@ -10,7 +10,7 @@
 // POST { action: 'push_grades', assignment_id } -> writes finished, fully graded students' scores to Classroom as draft + assigned grades
 //                                               (teachers still press Return in Classroom for students to see them)
 //
-// Business errors come back as 200 { ok: false, error } so the browser can show a message.
+// Business errors (and Google refusals) come back as 200 { ok: false, error } so the browser can show a message.
 
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
@@ -19,6 +19,8 @@ import {
   fetchClassroomProfile,
   fetchClassroomRosters,
   fetchHostedDomain,
+  findCourseworkByLink,
+  GoogleApiError,
   InvalidGrantError,
   listCourseStudentIds,
   listSubmissions,
@@ -28,7 +30,7 @@ import {
   type ImportCourse,
 } from './google.ts'
 
-export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[] }
+export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[]; hidden_emails?: number }
 
 export type AssignmentToPost = { id: string; lessonTitle: string; courseId: string; dueAt: string | null; courseworkId: string | null }
 
@@ -82,6 +84,8 @@ export type Deps = {
 /** Where a Classroom assignment sends students. The student player must serve this route. */
 export const studentAssignmentUrl = (origin: string, assignmentId: string) => `${origin.replace(/\/$/, '')}/student/assignments/${assignmentId}`
 
+const hiddenEmails = (courses: ImportCourse[]) => courses.reduce((n, c) => n + (c.hidden_emails ?? 0), 0)
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
@@ -120,15 +124,30 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     const courses = await fetchClassroomRosters(d.fetch, accessToken)
     const result = await d.importClassroom(caller.id, courses)
     await d.markUsed(caller.id)
-    return json({ ok: true, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
+    return json({ ok: true, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), hidden_emails: hiddenEmails(courses), ...result })
+  }
+
+  const decryptOrNull = async (enc: string): Promise<string | null> => {
+    try {
+      return await decryptToken(enc, d.env.encKey, caller.id)
+    } catch {
+      console.error('classroom: stored token failed to decrypt (TOKEN_ENCRYPTION_KEY changed?)')
+      return null
+    }
   }
 
   /** Access token from the stored refresh token, or a ready-made "reconnect"/"not_connected" response. */
   const storedAccess = async (): Promise<{ token: string } | { res: Response }> => {
     const enc = await d.loadToken(caller.id)
     if (!enc) return { res: json({ ok: false, error: 'not_connected' }) }
+    const rt = await decryptOrNull(enc)
+    if (rt === null) {
+      // Key changed or row corrupted: unusable either way. Drop it so Connect works again.
+      await d.deleteToken(caller.id)
+      return { res: json({ ok: false, error: 'reconnect' }) }
+    }
     try {
-      const t = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, await decryptToken(enc, d.env.encKey, caller.id))
+      const t = await refreshAccessToken(d.fetch, d.env.clientId, d.env.clientSecret, rt)
       return { token: t.accessToken }
     } catch (e) {
       if (e instanceof InvalidGrantError) {
@@ -166,9 +185,16 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       // Pending users keep an encrypted token so an admin's approval needs no second Google screen.
       await d.saveToken(caller.id, await encryptToken(rt, d.env.encKey, caller.id), t.scopes.join(' '))
       if (r.status === 'pending') return json({ ok: true, status: 'pending', reason: r.reason })
-      const result = await d.importClassroom(caller.id, courses)
-      await d.markUsed(caller.id)
-      return json({ ok: true, status: 'granted', via: r.via ?? null, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
+      // The role is already granted: an import problem must not read as a failed sign-up. The dashboard's
+      // Sync button retries it.
+      try {
+        const result = await d.importClassroom(caller.id, courses)
+        await d.markUsed(caller.id)
+        return json({ ok: true, status: 'granted', via: r.via ?? null, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), ...result })
+      } catch (e) {
+        console.error('claim_teacher: import failed after grant', e)
+        return json({ ok: true, status: 'granted', via: r.via ?? null, courses: 0, students: 0, import_error: (e as Error).message })
+      }
     }
 
     if (body.action === 'connect') {
@@ -192,14 +218,21 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const asg = await d.getAssignment(auth, id)
       if (!asg) return json({ ok: false, error: 'not your assignment' }, 404)
       if (asg.courseworkId) return json({ ok: true, coursework_id: asg.courseworkId, already: true })
+      if (!d.env.appOrigin) return json({ ok: false, error: 'not_configured' })
       const a = await storedAccess()
       if ('res' in a) return a.res
-      const cwid = await createCoursework(d.fetch, a.token, asg.courseId, {
-        title: asg.lessonTitle,
-        description: 'Video lesson in Oasis. Open the link, watch the whole video, and answer the questions as they come up.',
-        link: studentAssignmentUrl(d.env.appOrigin, asg.id),
-        dueAt: asg.dueAt,
-      })
+      const link = studentAssignmentUrl(d.env.appOrigin, asg.id)
+      // A previous call may have created it and then lost the response (school Wi-Fi, timeout): reuse it
+      // rather than give students two copies.
+      const cwid =
+        (await findCourseworkByLink(d.fetch, a.token, asg.courseId, link)) ??
+        (await createCoursework(d.fetch, a.token, asg.courseId, {
+          title: asg.lessonTitle,
+          description: 'Video lesson in Oasis. Open the link, watch the whole video, and answer the questions as they come up.',
+          link,
+          // A retry after the due date would send Classroom a date in the past; post without one instead.
+          dueAt: asg.dueAt && new Date(asg.dueAt).getTime() > Date.now() ? asg.dueAt : null,
+        }))
       await d.setCourseworkId(auth, asg.id, cwid)
       await d.markUsed(caller.id)
       return json({ ok: true, coursework_id: cwid })
@@ -253,7 +286,8 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     if (body.action === 'disconnect') {
       const enc = await d.loadToken(caller.id)
       if (enc) {
-        await revokeToken(d.fetch, await decryptToken(enc, d.env.encKey, caller.id)).catch(() => undefined)
+        const rt = await decryptOrNull(enc)
+        if (rt) await revokeToken(d.fetch, rt).catch(() => undefined)
         await d.deleteToken(caller.id)
       }
       return json({ ok: true })
@@ -262,6 +296,8 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     return json({ ok: false, error: 'unknown action' }, 400)
   } catch (e) {
     console.error('classroom function failed', e)
-    return json({ ok: false, error: (e as Error).message }, 500)
+    // 200 so the browser gets the reason instead of supabase-js's generic "non-2xx status code".
+    if (e instanceof GoogleApiError) return json({ ok: false, error: e.message, google_status: e.status, google_reason: e.reason })
+    return json({ ok: false, error: (e as Error).message })
   }
 }

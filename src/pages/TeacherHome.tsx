@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
+import { invokeFn } from '../lib/invokeFn'
 import { useClassroomSync } from '../lib/useClassroomSync'
 import Brand from '../components/Brand'
 
@@ -127,9 +128,7 @@ function LessonCard({
 
   /** Post to Google Classroom. The assignment already exists in Oasis, so a failure here is retryable. */
   const postToClassroom = async (assignmentId: string) => {
-    const { data, error } = await supabase.functions.invoke<{ ok: boolean; error?: string }>('classroom', {
-      body: { action: 'post', assignment_id: assignmentId },
-    })
+    const { data, error } = await invokeFn<{ ok: boolean; error?: string }>('classroom', { action: 'post', assignment_id: assignmentId })
     if (error || !data?.ok) {
       const why = data?.error === 'not_connected' || data?.error === 'reconnect' ? 'Connect Google Classroom first, then click Retry.' : (data?.error ?? error?.message ?? '')
       onError(`Assigned in Oasis, but posting to Google Classroom failed. ${why}`)
