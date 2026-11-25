@@ -4,6 +4,7 @@ import { takeClassroomIntent, useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import { invokeFn } from '../lib/invokeFn'
 import { pendingText, refusedText, type ClaimResponse, type MyRequest } from '../lib/teacherSignup'
+import Brand from '../components/Brand'
 
 // Teacher self sign-up. The browser only hands Google's token to the classroom function; the database decides
 // whether this account becomes a teacher (verified by the school's Google admin, an approved school domain, or
@@ -66,7 +67,7 @@ export function TeacherSignup() {
   return (
     <main className="page signup">
       <header className="bar">
-        <strong>Oasis</strong>
+        <Brand />
         <span className="muted">{profile?.email}</span>
         <button onClick={signOut}>Sign out</button>
       </header>

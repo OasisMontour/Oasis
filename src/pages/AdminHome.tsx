@@ -7,6 +7,7 @@ import { looksLikeEmail, teacherStatus, VIA_LABEL, type AdminAiUsage, type Admin
 import { formatDuration } from '../lib/duration'
 import { AdminBugs } from './AdminBugs'
 import { AdminSignups } from './AdminSignups'
+import Brand from '../components/Brand'
 
 // "Nov 23, 7 AM": enough to spot a stale sync or a teacher who's gone quiet, and keeps the table narrow.
 const whenShort = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' }) : '–')
@@ -48,7 +49,7 @@ export function AdminHome() {
   return (
     <main className="page admin">
       <header className="bar">
-        <strong>Oasis admin</strong>
+        <Brand suffix="admin" />
         <span className="muted">{profile?.email}</span>
         <Link to="/changelog">Changelog</Link>
         <Link className="button" to={profile?.role === 'teacher' ? '/teacher' : '/student'}>Back to app</Link>
