@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import { useClassroomSync } from '../lib/useClassroomSync'
+import Brand from '../components/Brand'
 
 type ClassRow = { id: string; name: string; enrollments: { count: number }[]; roster_entries: { count: number }[] }
 type LessonRow = {
@@ -50,7 +51,7 @@ export function TeacherHome() {
   return (
     <main className="page">
       <header className="bar">
-        <strong>Oasis</strong>
+        <Brand />
         <span className="muted">{profile?.email}</span>
         <Link to="/report?from=%2Fteacher">Report a bug</Link>
         {isAdmin && <Link className="button" to="/admin">Admin</Link>}
