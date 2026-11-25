@@ -67,7 +67,8 @@ export function LessonBuilder() {
       const { data, error } = await query.single()
       if (!active) return
       setLoading(false)
-      if (error || !data) return setStatus({ kind: 'error', text: "Couldn't load that lesson." })
+      // A bad, someone else's, or unshared lesson id: an error screen, not an empty form that would fail on Save.
+      if (error || !data) return setLoadFailed(true)
       setShared(!copyId && data.shared)
       setDirty(Boolean(copyId))
       setTitle(data.title)
