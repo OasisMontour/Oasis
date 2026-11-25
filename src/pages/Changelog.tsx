@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import type { ChangelogEntry } from '../lib/bugs'
+import Brand from '../components/Brand'
 
 // Fixes the team has published. Only the fix note is shown, never the original report.
 export function Changelog() {
@@ -19,7 +20,7 @@ export function Changelog() {
   return (
     <main className="page narrow">
       <header className="bar">
-        <strong>Oasis</strong>
+        <Brand />
         <Link to="/report">Report a bug</Link>
         <Link className="button" to={profile?.role === 'teacher' ? '/teacher' : '/student'}>Back</Link>
       </header>

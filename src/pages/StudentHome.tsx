@@ -7,6 +7,7 @@ import { REMOVED_TEXT, type MyRequest } from '../lib/teacherSignup'
 import { assignmentStatus, dueLabel, progressPct, splitAssignments, type StudentAssignmentRow } from '../lib/player'
 import { formatTime } from '../lib/time'
 import '../student.css'
+import Brand from '../components/Brand'
 
 // Most students arrive straight from the Classroom link and never see this. It's a to-do list.
 // Classes come from the teacher's Google Classroom roster, so there's nothing to join.
@@ -37,7 +38,7 @@ export function StudentHome() {
   return (
     <div className="student-home">
       <header className="s-top">
-        <strong>Oasis</strong>
+        <Brand />
         <span className="s-muted">{profile?.email}</span>
         <Link className="s-btn ghost" to="/report?from=%2Fstudent">
           Report a bug

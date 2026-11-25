@@ -24,7 +24,7 @@ export function SignIn() {
 
   return (
     <main className="signin">
-      <h1>Oasis</h1>
+      <h1 className="signin-brand"><img src="/logo.svg" alt="" width={48} height={48} />Oasis</h1>
       <p className="muted">Video lessons your students actually watch.</p>
       <button
         className="primary"
