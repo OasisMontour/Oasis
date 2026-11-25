@@ -218,6 +218,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const asg = await d.getAssignment(auth, id)
       if (!asg) return json({ ok: false, error: 'not your assignment' }, 404)
       if (asg.courseworkId) return json({ ok: true, coursework_id: asg.courseworkId, already: true })
+      if (!d.env.appOrigin) return json({ ok: false, error: 'not_configured' })
       const a = await storedAccess()
       if ('res' in a) return a.res
       const link = studentAssignmentUrl(d.env.appOrigin, asg.id)
