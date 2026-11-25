@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
       clientId: Deno.env.get('GOOGLE_CLIENT_ID')!,
       clientSecret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
       encKey: Deno.env.get('TOKEN_ENCRYPTION_KEY')!,
-      appOrigin: Deno.env.get('APP_ORIGIN')!,
+      appOrigin: Deno.env.get('APP_ORIGIN') ?? '',
     },
     async getCaller(authHeader) {
       const c = asCaller(authHeader)
