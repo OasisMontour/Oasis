@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { classroomStatus, localNow } from './assign'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('./supabase', () => ({ supabase: {} }))
+vi.mock('./invokeFn', () => ({ invokeFn: vi.fn() }))
+
+const { classroomStatus, localNow } = await import('./assign')
 
 describe('classroomStatus', () => {
   it('reads draft, posted, deleted and not-yet', () => {
