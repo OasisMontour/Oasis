@@ -20,7 +20,6 @@ Placeholders like `{{CONTACT_EMAIL}}` are filled in from `src/legal/config.ts`. 
 |---|---|
 | `OPERATOR` | Legal name of whoever runs Oasis: a company once one exists, otherwise the founders' full names |
 | `CONTACT_EMAIL` | An inbox someone actually reads, e.g. privacy@yourdomain. Not a personal school email. |
-| `MAILING_ADDRESS` | A mailing address (a PO box is fine) |
 | `EFFECTIVE_DATE` | The date the reviewed version goes live |
 | `DISTRICT_NAME`, `TERM_END`, `ANNUAL_DELETION_DATE` | DPA only; fill in per district when you send it (left as blanks on the site) |
 

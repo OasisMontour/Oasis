@@ -19,7 +19,7 @@ describe('fillPlaceholders', () => {
   it('highlights empty and unknown placeholders instead of dropping them', () => {
     expect(fillPlaceholders('{{CONTACT_EMAIL}}', { CONTACT_EMAIL: '  ' })).toBe('<mark class="placeholder">[contact email]</mark>')
     expect(fillPlaceholders('{{NOPE}}', {})).toContain('[nope]')
-    expect(placeholderLabel('MAILING_ADDRESS')).toBe('mailing address')
+    expect(placeholderLabel('ANNUAL_DELETION_DATE')).toBe('annual deletion date')
   })
 
   it('lists empty values', () => {

@@ -135,5 +135,4 @@ If we change this policy, we'll update the date at the top. If a change is signi
 ## 12. Contact
 
 {{OPERATOR}}
-{{MAILING_ADDRESS}}
 {{CONTACT_EMAIL}}
