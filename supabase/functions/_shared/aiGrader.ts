@@ -199,7 +199,7 @@ export function decide(v: Verdict): { outcome: 'graded'; correct: boolean } | { 
 
 // ---------------------------------------------------------------- providers
 
-type CallResult =
+export type CallResult =
   | { ok: true; content: unknown }
   | { ok: false; cooldownS: number; error: string }
 
@@ -214,14 +214,22 @@ export function cooldownFor(status: number, retryAfter: string | null): number {
   return 0 // 5xx, timeouts: transient
 }
 
-async function callProvider(p: Provider, messages: unknown, deps: Deps): Promise<CallResult> {
+export type CallOpts = { maxTokens?: number; temperature?: number; timeoutMs?: number }
+
+/** One chat call. Shared with the ai-draft function, which needs longer replies. */
+export async function callProvider(
+  p: Provider,
+  messages: unknown,
+  deps: Pick<Deps, 'fetch' | 'timeoutMs'>,
+  opts: CallOpts = {},
+): Promise<CallResult> {
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), deps.timeoutMs ?? 12000)
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? deps.timeoutMs ?? 12000)
   try {
     const res = await deps.fetch(p.url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${p.key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...p.extra, model: p.model, messages, temperature: 0, max_tokens: 600, stream: false }),
+      body: JSON.stringify({ ...p.extra, model: p.model, messages, temperature: opts.temperature ?? 0, max_tokens: opts.maxTokens ?? 600, stream: false }),
       signal: ctrl.signal,
     })
     if (!res.ok) {

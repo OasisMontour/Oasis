@@ -69,6 +69,7 @@ export function TeacherHome() {
           </div>
           <span className="row">
             <Link className="button" to="/teacher/lessons/new?from=edpuzzle">Bring over an Edpuzzle</Link>
+            <Link className="button" to="/teacher/lessons/new?ai=1">Sub plan with AI</Link>
             <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
           </span>
         </div>

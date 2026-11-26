@@ -6,6 +6,7 @@ import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImpo
 import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
 import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
+import { AiDraftPanel } from '../components/AiDraftPanel'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
 type Draft = DraftQuestion & { key: string; timeText: string }
@@ -32,7 +33,7 @@ export function LessonBuilder() {
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
-  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
+  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle' | 'ai'>('manual')
   const [loading, setLoading] = useState(Boolean(id || copyId || starterId))
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -460,6 +461,16 @@ export function LessonBuilder() {
           </span>
         </div>
         <p className="muted small">Pause the video where you want a question, then add it. Students can't skip past a question until they answer it.</p>
+
+        <AiDraftPanel
+          durationS={duration}
+          open={searchParams.get('ai') === '1'}
+          onDrafts={(qs) => {
+            setQuestions((cur) => [...cur, ...qs.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
+            setSource((s) => (s === 'manual' ? 'ai' : s))
+            touch()
+          }}
+        />
 
         <ol className="cards">
           {questions.map((q, i) => (

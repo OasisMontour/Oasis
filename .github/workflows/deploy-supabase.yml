@@ -133,4 +133,4 @@ jobs:
       - name: Deploy edge functions
         if: inputs.what != 'database only' && inputs.dry_run != true
         run: |
-          supabase functions deploy classroom ai-grade --remote="$PROJECT_REF" --use-api --yes
+          supabase functions deploy classroom ai-grade ai-draft --remote="$PROJECT_REF" --use-api --yes
