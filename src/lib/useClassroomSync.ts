@@ -4,8 +4,13 @@ import { takeClassroomIntent, useAuth } from '../auth/AuthProvider'
 import { supabase } from './supabase'
 import { invokeFn } from './invokeFn'
 
-// Re-sync rosters automatically when the dashboard opens and the last sync is older than this.
-const AUTO_SYNC_AFTER_MS = 6 * 60 * 60 * 1000
+// Rosters re-sync in the background while a teacher has Oasis open (components/RosterAutoSync.tsx): every
+// 15 minutes, and when they come back to the tab after longer than that (beta item 4).
+export const AUTO_SYNC_AFTER_MS = 15 * 60 * 1000
+/** Fired on window after any successful roster sync, so open pages can reload their classes. */
+export const ROSTER_SYNC_EVENT = 'oasis:roster-synced'
+/** localStorage key: when any tab last started a roster sync, so several open tabs don't all sync. */
+export const ROSTER_SYNC_KEY = 'oasis:last-roster-sync'
 
 type Status = { connected: boolean; last_synced_at: string | null }
 type FnResult =
@@ -14,6 +19,7 @@ type FnResult =
 
 export type ClassroomSync = {
   connected: boolean | null // null = still loading
+  lastSyncedAt: string | null
   busy: boolean
   message: { kind: 'ok' | 'error'; text: string } | null
   connect: () => Promise<void>
@@ -64,12 +70,14 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
       if (data.skipped.length)
         text += ` Skipped ${data.skipped.join(', ')}: another teacher already imported ${data.skipped.length === 1 ? 'it' : 'them'}.`
       if (!quiet || data.created || data.newly_enrolled || data.removed || data.skipped.length) setMessage({ kind: 'ok', text })
+      localStorage.setItem(ROSTER_SYNC_KEY, String(Date.now()))
       onImported()
+      window.dispatchEvent(new Event(ROSTER_SYNC_EVENT))
     },
     [onImported, profile?.email],
   )
 
-  // On load: finish a fresh connection, or auto-sync if it's been a while.
+  // On load: finish a fresh connection. Regular syncs are RosterAutoSync's job.
   useEffect(() => {
     if (!profile || started.current) return
     started.current = true
@@ -88,15 +96,13 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
         // closes mid-call. The server keeps its own encrypted copy.
         await supabase.auth.refreshSession().catch(() => undefined)
         await call({ action: 'connect', refresh_token: refresh })
-        return
       }
-      const stale = !s.last_synced_at || Date.now() - new Date(s.last_synced_at).getTime() > AUTO_SYNC_AFTER_MS
-      if (s.connected && stale) call({ action: 'sync' }, true)
     })()
   }, [profile, session, params, setParams, call])
 
   return {
     connected: status?.connected ?? null,
+    lastSyncedAt: status?.last_synced_at ?? null,
     busy,
     message,
     connect: () => connectClassroom(),

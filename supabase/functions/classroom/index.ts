@@ -2,12 +2,12 @@
 // Secrets (supabase secrets set ...): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, APP_ORIGIN.
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { handleClassroom, type ClaimResult, type SyncResult } from '../_shared/classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type RecheckTarget, type SyncResult } from '../_shared/classroomHandler.ts'
 import { corsFor, parseOrigins } from '../_shared/cors.ts'
 
 const url = Deno.env.get('SUPABASE_URL')!
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!
-// Service role is used ONLY for the google_tokens table, claim_teacher_for and import_classroom_for (rosters must come from
+// Service role is used ONLY for the google_tokens table, claim_teacher_for, roster_recheck_target and import_classroom_for (rosters must come from
 // Google, so browsers can't call it). Everything else runs as the caller.
 const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
 const asCaller = (authHeader: string) =>
@@ -61,6 +61,9 @@ Deno.serve(async (req) => {
     },
     async markUsed(userId) {
       must(await admin.from('google_tokens').update({ last_used_at: new Date().toISOString() }).eq('user_id', userId))
+    },
+    async recheckTarget(studentId, assignmentId) {
+      return must(await admin.rpc('roster_recheck_target', { p_student: studentId, p_assignment: assignmentId })) as RecheckTarget
     },
     async importClassroom(teacherId, courses) {
       return must(await admin.rpc('import_classroom_for', { p_teacher: teacherId, p_courses: courses })) as SyncResult

@@ -23,6 +23,7 @@ import {
   getAssignmentClassName,
   getQuestion,
   getStudentLesson,
+  recheckEnrollment,
   sendFocusEvent,
   saveProgress,
   submitAnswer,
@@ -72,6 +73,7 @@ export function StudentPlayer() {
   const [note, setNote] = useState<string | null>(null)
   const [finishError, setFinishError] = useState(false)
   const [resumeError, setResumeError] = useState(false)
+  const [checking, setChecking] = useState(false)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -132,12 +134,26 @@ export function StudentPlayer() {
 
   useEffect(() => {
     let cancelled = false
-    getStudentLesson(assignmentId)
+    const load = async () => {
+      try {
+        return await getStudentLesson(assignmentId)
+      } catch (e) {
+        // Not in this class yet? They may have been added in Google Classroom after the teacher's last sync.
+        // Recheck that class once before turning them away (beta item 4).
+        if (classifyRpcError(e as { message?: string }) !== 'not_assigned' || /uuid/i.test((e as Error).message ?? '')) throw e
+        if (!cancelled) setChecking(true)
+        const enrolled = await recheckEnrollment(assignmentId).catch(() => false)
+        if (!enrolled) throw e
+        return await getStudentLesson(assignmentId)
+      }
+    }
+    load()
       .then((l) => {
         if (cancelled) return
         applyServerState(l)
         setCurrent(l.last_pos_s)
         setPhaseBoth(l.finished_at ? 'done' : 'ready')
+        getAssignmentClassName(assignmentId).then((n) => !cancelled && setClassName(n))
       })
       .catch((e: { message?: string }) => {
         if (cancelled) return
@@ -146,7 +162,7 @@ export function StudentPlayer() {
         if (kind === 'not_assigned' || /uuid/i.test(e.message ?? '')) setFatal({ kind: 'not_assigned' })
         else setFatal({ kind: 'load' })
       })
-    getAssignmentClassName(assignmentId).then((n) => !cancelled && setClassName(n))
+      .finally(() => !cancelled && setChecking(false))
     return () => {
       cancelled = true
     }
@@ -723,7 +739,7 @@ export function StudentPlayer() {
           )}
           {(phase === 'loading' || phase === 'ready') && (
             <div className="p-overlay solid">
-              <StartCard lesson={l} ready={playerReady} onStart={start} />
+              <StartCard lesson={l} ready={playerReady} checking={checking} onStart={start} />
             </div>
           )}
         </div>
@@ -797,8 +813,8 @@ export function StudentPlayer() {
   )
 }
 
-function StartCard({ lesson, ready, onStart }: { lesson: StudentLesson | null; ready: boolean; onStart: () => void }) {
-  if (!lesson) return <p className="p-muted">Loading…</p>
+function StartCard({ lesson, ready, checking, onStart }: { lesson: StudentLesson | null; ready: boolean; checking?: boolean; onStart: () => void }) {
+  if (!lesson) return <p className="p-muted">{checking ? 'Checking your class list in Google Classroom…' : 'Loading…'}</p>
   const n = lesson.questions.length
   const resuming = lesson.max_watched_s > 0
   return (

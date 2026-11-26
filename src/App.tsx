@@ -5,6 +5,8 @@ import { RequireRole, RequireSignedIn } from './auth/RequireRole'
 import { RequireAdmin } from './auth/RequireAdmin'
 import { SignIn } from './pages/SignIn'
 import { TeacherHome } from './pages/TeacherHome'
+import { TeacherClass } from './pages/TeacherClass'
+import { TeacherSettings } from './pages/TeacherSettings'
 import { StudentHome } from './pages/StudentHome'
 import { StudentPlayer } from './pages/StudentPlayer'
 import { LessonBuilder } from './pages/LessonBuilder'
@@ -15,6 +17,7 @@ import { Changelog } from './pages/Changelog'
 import { TeacherSignup } from './pages/TeacherSignup'
 import { LegalFooter } from './components/LegalFooter'
 import { BetaBanner } from './components/BetaBanner'
+import { RosterAutoSync } from './components/RosterAutoSync'
 import { LEGAL_DOCS, type LegalDocId } from './legal/docs'
 
 const Legal = lazy(() => import('./pages/Legal'))
@@ -24,11 +27,14 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <BetaBanner />
+        <RosterAutoSync />
         <Routes>
           <Route path="/" element={<SignIn />} />
           {/* Any signed-in account; the server decides whether it becomes a teacher. */}
           <Route path="/teacher/signup" element={<RequireSignedIn><TeacherSignup /></RequireSignedIn>} />
           <Route path="/teacher" element={<RequireRole role="teacher"><TeacherHome /></RequireRole>} />
+          <Route path="/teacher/classes/:id" element={<RequireRole role="teacher"><TeacherClass /></RequireRole>} />
+          <Route path="/teacher/settings" element={<RequireRole role="teacher"><TeacherSettings /></RequireRole>} />
           <Route path="/teacher/lessons/new" element={<RequireRole role="teacher"><LessonBuilder /></RequireRole>} />
           <Route path="/teacher/lessons/:id" element={<RequireRole role="teacher"><LessonBuilder /></RequireRole>} />
           <Route path="/teacher/assignments/:id" element={<RequireRole role="teacher"><AssignmentResults /></RequireRole>} />

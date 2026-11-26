@@ -1,3 +1,4 @@
+import { invokeFn } from './invokeFn'
 import { supabase } from './supabase'
 import type { AnswerResult, PlayerQuestion, StudentAssignmentRow, StudentLesson } from './player'
 
@@ -69,4 +70,13 @@ export type FocusKind = 'exit_fullscreen' | 'tab_hidden' | 'blur' | 'no_fullscre
 export async function sendFocusEvent(attemptId: string, kind: FocusKind, videoS: number): Promise<void> {
   const { error } = await supabase.rpc('log_focus_event', { p_attempt: attemptId, p_kind: kind, p_video_s: Math.max(0, Math.round(videoS * 10) / 10) })
   if (error) throw error
+}
+
+/**
+ * The student opened an assignment for a class Oasis doesn't have them in yet (added in Google Classroom after the
+ * teacher's last sync). Asks the server to re-read that class's roster once. True if they're in it now.
+ */
+export async function recheckEnrollment(assignmentId: string): Promise<boolean> {
+  const { data } = await invokeFn<{ ok: boolean; enrolled?: boolean }>('classroom', { action: 'student_recheck', assignment_id: assignmentId })
+  return data?.ok === true && data.enrolled === true
 }

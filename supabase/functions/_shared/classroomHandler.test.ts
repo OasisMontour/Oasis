@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { handleClassroom, type ClaimResult, type Deps, type TeacherEvidence } from './classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type Deps, type RecheckTarget, type TeacherEvidence } from './classroomHandler.ts'
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
 
@@ -20,9 +20,11 @@ function setup(
     profileStatus?: number
     importFails?: boolean
     draftFails?: boolean
+    recheck?: RecheckTarget
   } = {},
 ) {
   const claims: TeacherEvidence[] = []
+  const rechecks: { student: string; asgId: string }[] = []
   const revoked: string[] = []
   const store = new Map<string, string>()
   const calls: string[] = []
@@ -64,7 +66,7 @@ function setup(
       if (opts.draftFails) return Response.json({ error: { status: 'INVALID_ARGUMENT', message: 'nope' } }, { status: 400 })
       return Response.json({ id: 'cw1', state: body.state })
     }
-    if (url === 'https://classroom.googleapis.com/v1/courses/gc1') return Response.json({ id: 'gc1', alternateLink: 'https://classroom.google.com/c/R0Mx' })
+    if (url === 'https://classroom.googleapis.com/v1/courses/gc1') return Response.json({ id: 'gc1', name: 'Bio', section: 'P2', alternateLink: 'https://classroom.google.com/c/R0Mx' })
     if (url === 'https://classroom.googleapis.com/v1/courses/gc1/courseWork/cw1')
       return cwState === null ? new Response('', { status: 404 }) : Response.json({ id: 'cw1', state: cwState, ...(cwState === 'PUBLISHED' ? { alternateLink: 'https://classroom.google.com/c/R0Mx/a/Y3cx/details' } : {}) })
     if (url.includes('/studentSubmissions') && init?.method === 'PATCH') {
@@ -86,7 +88,16 @@ function setup(
   const deps: Deps = {
     fetch: fakeFetch,
     env: { clientId: 'cid', clientSecret: 'sec', encKey: KEY, appOrigin: 'https://oasis.test/' },
-    getCaller: async (h) => (h === 'Bearer jwt' ? { id: 'teacher-1', email: 't@d.org', isTeacher: opts.teacher ?? true } : null),
+    getCaller: async (h) =>
+      h === 'Bearer jwt'
+        ? { id: 'teacher-1', email: 't@d.org', isTeacher: opts.teacher ?? true }
+        : h === 'Bearer kid'
+          ? { id: 'kid-1', email: 'Kid@d.org', isTeacher: false }
+          : null,
+    recheckTarget: async (student, asgId) => {
+      rechecks.push({ student, asgId })
+      return opts.recheck ?? { status: 'recheck', teacher_id: 'teacher-1', class_id: 'c1', course_id: 'gc1' }
+    },
     claimTeacher: async (_u, ev) => {
       claims.push(ev)
       return opts.claim ?? { status: 'granted', via: 'verified_teacher' }
@@ -113,7 +124,7 @@ function setup(
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { claims, revoked, setRoster: (r: unknown[]) => void (roster = r), setCwState: (v: string | null) => void (cwState = v), store, calls, imported, posted, patched, grades, asg, call }
+  return { rechecks, claims, revoked, setRoster: (r: unknown[]) => void (roster = r), setCwState: (v: string | null) => void (cwState = v), store, calls, imported, posted, patched, grades, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -433,5 +444,42 @@ describe('token encryption', () => {
     const r = await t.call({ action: 'connect', refresh_token: 'good-refresh' })
     expect(r.body).toMatchObject({ ok: true, students: 1, hidden_emails: 1 })
     expect((t.imported[0] as { hidden_emails: number }[])[0].hidden_emails).toBe(1)
+  })
+})
+
+describe('student roster recheck', () => {
+  const ASG = '4a000000-0000-0000-0000-000000000001'
+  const asKid = (t: ReturnType<typeof setup>, body: Record<string, unknown>) => t.call(body, 'Bearer kid')
+
+  it("re-reads only that class with the teacher's token and enrolls a student who's now on the roster", async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
+    const r = await asKid(t, { action: 'student_recheck', assignment_id: ASG })
+    expect(r.body).toEqual({ ok: true, enrolled: true })
+    expect(t.rechecks).toEqual([{ student: 'kid-1', asgId: ASG }])
+    expect(t.imported).toEqual([[{ id: 'gc1', name: 'Bio', section: 'P2', students: [{ email: 'kid@d.org', name: 'Kid' }], hidden_emails: 0 }]])
+  })
+
+  it('says not enrolled when the student still is not on the roster', async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
+    t.setRoster([{ profile: { emailAddress: 'someone@d.org' } }])
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false })
+  })
+
+  it('does nothing when rate-limited, unknown, or the teacher is not connected', async () => {
+    for (const status of ['limited', 'not_found'] as const) {
+      const t = setup({ recheck: { status } })
+      expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false, reason: status })
+      expect(t.imported).toEqual([])
+    }
+    const t = setup()
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false, reason: 'teacher_not_connected' })
+  })
+
+  it('students still cannot sync, post or push grades, and need a real assignment id', async () => {
+    const t = setup()
+    for (const action of ['sync', 'post', 'push_grades', 'disconnect']) expect((await asKid(t, { action, assignment_id: ASG })).status).toBe(403)
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: '../x' })).status).toBe(400)
   })
 })

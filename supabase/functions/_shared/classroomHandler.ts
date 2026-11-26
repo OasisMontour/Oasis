@@ -5,6 +5,9 @@
 //                                                  (claim_teacher_for), and on success stores the token and syncs
 // POST { action: 'connect', refresh_token } -> verifies + stores the teacher's Google refresh token, then syncs
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
+// POST { action: 'student_recheck', assignment_id } -> any signed-in student: re-reads that assignment's class roster
+//                                               from Google with the teacher's stored token (rate-limited by the
+//                                               database), so a student added in Classroom today isn't turned away
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
 // POST { action: 'post', assignment_id }    -> creates the assignment in its Classroom course as an unpublished DRAFT
 //                                             (idempotent; never publishes). The teacher picks a topic and posts it there.
@@ -20,6 +23,7 @@ import {
   createCoursework,
   fetchClassroomProfile,
   fetchClassroomRosters,
+  fetchCourseRoster,
   fetchHostedDomain,
   findCourseworkByLink,
   getCourseLink,
@@ -74,6 +78,10 @@ export type ClaimResult =
   | { status: 'pending'; reason: string }
   | { status: 'refused'; reason: string }
 
+export type RecheckTarget =
+  | { status: 'recheck'; teacher_id: string; class_id: string; course_id: string }
+  | { status: 'enrolled' | 'limited' | 'not_found' }
+
 export type Deps = {
   fetch: typeof fetch
   env: { clientId: string; clientSecret: string; encKey: string; appOrigin: string }
@@ -90,6 +98,8 @@ export type Deps = {
    * data it just fetched from Google using the teacher's own token, for the teacher id it verified.
    */
   importClassroom(teacherId: string, courses: ImportCourse[]): Promise<SyncResult>
+  /** Service role: which class to recheck for this student, rate-limited (roster_recheck_target). */
+  recheckTarget(studentId: string, assignmentId: string): Promise<RecheckTarget>
   /** Read as the caller, so RLS guarantees it's their own assignment. null if not found/not theirs. */
   getAssignment(authHeader: string, assignmentId: string): Promise<AssignmentToPost | null>
   /** Read as the caller. null if not found/not theirs. Only finished attempts with a score. */
@@ -121,8 +131,8 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     return json({ ok: false, error: 'bad request' }, 400)
   }
   if (!body || typeof body !== 'object') return json({ ok: false, error: 'bad request' }, 400)
-  // Signing up is the one thing a non-teacher can do here.
-  if (!caller.isTeacher && body.action !== 'claim_teacher') return json({ ok: false, error: 'teachers only' }, 403)
+  // Signing up, and asking for their own class to be rechecked, are the only things a non-teacher can do here.
+  if (!caller.isTeacher && body.action !== 'claim_teacher' && body.action !== 'student_recheck') return json({ ok: false, error: 'teachers only' }, 403)
 
   /** Fresh access token from a refresh token the browser just got from Google, with every Classroom scope. */
   const freshAccess = async (rt: unknown): Promise<{ token: string; scopes: string[] } | { res: Response }> => {
@@ -146,9 +156,9 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     return json({ ok: true, courses: courses.length, students: courses.reduce((n, c) => n + c.students.length, 0), hidden_emails: hiddenEmails(courses), ...result })
   }
 
-  const decryptOrNull = async (enc: string): Promise<string | null> => {
+  const decryptOrNull = async (enc: string, userId = caller.id): Promise<string | null> => {
     try {
-      return await decryptToken(enc, d.env.encKey, caller.id)
+      return await decryptToken(enc, d.env.encKey, userId)
     } catch {
       console.error('classroom: stored token failed to decrypt (TOKEN_ENCRYPTION_KEY changed?)')
       return null
@@ -156,13 +166,13 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
   }
 
   /** Access token from the stored refresh token, or a ready-made "reconnect"/"not_connected" response. */
-  const storedAccess = async (): Promise<{ token: string } | { res: Response }> => {
-    const enc = await d.loadToken(caller.id)
+  const storedAccess = async (userId = caller.id): Promise<{ token: string } | { res: Response }> => {
+    const enc = await d.loadToken(userId)
     if (!enc) return { res: json({ ok: false, error: 'not_connected' }) }
-    const rt = await decryptOrNull(enc)
+    const rt = await decryptOrNull(enc, userId)
     if (rt === null) {
       // Key changed or row corrupted: unusable either way. Drop it so Connect works again.
-      await d.deleteToken(caller.id)
+      await d.deleteToken(userId)
       return { res: json({ ok: false, error: 'reconnect' }) }
     }
     try {
@@ -170,7 +180,7 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       return { token: t.accessToken }
     } catch (e) {
       if (e instanceof InvalidGrantError) {
-        await d.deleteToken(caller.id)
+        await d.deleteToken(userId)
         return { res: json({ ok: false, error: 'reconnect' }) }
       }
       throw e
@@ -329,6 +339,22 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       await Promise.all(Array.from({ length: Math.min(5, todo.length) }, worker))
       await d.markUsed(caller.id)
       return json({ ok: true, pushed, not_in_classroom: notInClassroom, needs_grading: needsGrading, failed })
+    }
+
+    if (body.action === 'student_recheck') {
+      const id = body.assignment_id
+      if (!id || typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) return json({ ok: false, error: 'missing assignment_id' }, 400)
+      const target = await d.recheckTarget(caller.id, id)
+      if (target.status === 'enrolled') return json({ ok: true, enrolled: true })
+      if (target.status !== 'recheck') return json({ ok: true, enrolled: false, reason: target.status })
+      // The teacher's token, never the student's: only this one class, only data Google returns right now.
+      const a = await storedAccess(target.teacher_id)
+      if ('res' in a) return json({ ok: true, enrolled: false, reason: 'teacher_not_connected' })
+      const course = await fetchCourseRoster(d.fetch, a.token, target.course_id)
+      await d.importClassroom(target.teacher_id, [course])
+      await d.markUsed(target.teacher_id)
+      const enrolled = course.students.some((s) => s.email.toLowerCase() === caller.email.toLowerCase())
+      return json({ ok: true, enrolled })
     }
 
     if (body.action === 'disconnect') {

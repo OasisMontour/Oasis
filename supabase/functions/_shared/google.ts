@@ -154,6 +154,22 @@ export async function fetchClassroomRosters(f: typeof fetch, token: string): Pro
 
 export type CourseworkRef = { id: string; state: string; url: string | null }
 
+/** One course and its students (roster recheck for a student who isn't enrolled yet). */
+export async function fetchCourseRoster(f: typeof fetch, token: string, courseId: string): Promise<ImportCourse> {
+  const res = await getWithRetry(f, `${API}/courses/${encodeURIComponent(courseId)}`, token)
+  if (!res.ok) throw await googleError(res, 'reading the class')
+  const c = (await res.json()) as GCourse
+  const students = await getAll<GStudent>(f, token, `/courses/${encodeURIComponent(courseId)}/students`, 'students')
+  const withEmail = students.filter((s) => s.profile?.emailAddress)
+  return {
+    id: c.id,
+    name: c.name,
+    section: c.section ?? '',
+    students: withEmail.map((s) => ({ email: s.profile.emailAddress!, name: s.profile.name?.fullName ?? '' })),
+    hidden_emails: students.length - withEmail.length,
+  }
+}
+
 /**
  * Coursework in this course that already links to `link`, if any. Classroom has no idempotency key, so this is
  * how a retry after a lost response avoids posting the same assignment twice.
