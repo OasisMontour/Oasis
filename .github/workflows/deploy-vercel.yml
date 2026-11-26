@@ -1,0 +1,32 @@
+name: Deploy Vercel
+
+# Vercel's Hobby plan won't auto-deploy from a private repo owned by a GitHub org,
+# but a Deploy Hook still builds main. This pings the hook on every push to main.
+# Setup: Vercel > oasis-8dkr > Settings > Git > Deploy Hooks > name "github", branch "main",
+# then save the URL as the repo secret VERCEL_DEPLOY_HOOK. Without the secret this does nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-vercel
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel production build
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "VERCEL_DEPLOY_HOOK secret not set; skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null
+          echo "Vercel build triggered. Check Vercel > oasis-8dkr > Deployments."
