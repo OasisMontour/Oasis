@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/bulkPaste'
-import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
-import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
+import { parseEdpuzzlePaste } from '../lib/edpuzzleImport'
+import { readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
 import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
 import { AiDraftPanel } from '../components/AiDraftPanel'
@@ -26,15 +26,16 @@ export function LessonBuilder() {
   const [videoError, setVideoError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
+  // No share checkbox for the beta (item 2): new lessons are private, and a lesson that was already shared keeps
+  // its setting on save. Changing existing sharing is a separate decision.
   const [shared, setShared] = useState(false)
   const copyId = isNew ? searchParams.get('copy') : null
-  const starterId = isNew ? searchParams.get('starter') : null
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
   const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle' | 'ai'>('manual')
-  const [loading, setLoading] = useState(Boolean(id || copyId || starterId))
+  const [loading, setLoading] = useState(Boolean(id || copyId))
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -51,22 +52,9 @@ export function LessonBuilder() {
 
   // ---- load an existing lesson
   useEffect(() => {
-    if (!id && !copyId && !starterId) return
+    if (!id && !copyId) return
     let active = true
     ;(async () => {
-      if (starterId) {
-        const { data, error } = await supabase.from('starter_lessons').select('*').eq('id', starterId).single()
-        if (!active) return
-        setLoading(false)
-        if (error || !data) return setStatus({ kind: 'error', text: 'Could not load this starter lesson.' })
-        setTitle(data.title)
-        setSubject(data.subject)
-        setVideoInput('https://youtu.be/' + data.youtube_id)
-        setYoutubeId(data.youtube_id)
-        setQuestions((data.questions as DraftQuestion[]).map(toDraft))
-        setDirty(true)
-        return
-      }
       let query = supabase.from('lessons')
         .select('id, shared, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
         .eq('id', copyId || id)
@@ -93,7 +81,7 @@ export function LessonBuilder() {
       setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [] })))
     })()
     return () => { active = false }
-  }, [id, copyId, starterId])
+  }, [id, copyId])
 
   // ---- warn before leaving with unsaved edits
   useEffect(() => {
@@ -201,37 +189,11 @@ export function LessonBuilder() {
     touch()
   }
 
-  // ---- Edpuzzle import: the teacher copies their own lesson's questions and pastes them here.
-  // Nothing is fetched from Edpuzzle. Imported questions are plain drafts and save through
-  // save_lesson like any other, so they get the same ownership checks and question locking.
-  const [importText, setImportText] = useState('')
+  // ---- Edpuzzle bookmarklet arrivals. The import panel is gone from the builder (beta item 2), but teachers who
+  // already dragged "Send to Oasis" to their bookmarks bar still land here with questions in the #fragment
+  // (never sent to a server). It's untrusted, so it only pre-fills drafts; nothing is saved until Save.
+  // Retiring the importer itself is Wyatt's call, so the parser stays.
   const [importNote, setImportNote] = useState<{ added: number; needAnswer: number; warnings: string[] } | null>(null)
-  const [fromBookmarklet, setFromBookmarklet] = useState(false)
-  const addImport = (text = importText, ytOverride: string | null = null) => {
-    const r = parseEdpuzzlePaste(text)
-    if (ytOverride) r.youtubeId = ytOverride
-    // Pasting the same questions twice (easy to do) shouldn't double them up.
-    const have = new Set(questions.map((q) => `${q.at_s}|${q.prompt.trim()}`))
-    const fresh = r.questions.filter((q) => !have.has(`${q.at_s}|${q.prompt.trim()}`))
-    const dupes = r.questions.length - fresh.length
-    const warnings = dupes ? [...r.warnings, `Skipped ${dupes} question${dupes === 1 ? '' : 's'} already in this lesson.`] : r.warnings
-    const needAnswer = fresh.filter((q) => q.kind === 'mc' && q.correct_index === null).length
-    setImportNote({ added: fresh.length, needAnswer, warnings })
-    if (r.youtubeId && !youtubeId) {
-      setVideoInput(`https://youtu.be/${r.youtubeId}`)
-      setVideoError(null)
-      setDuration(null)
-      setYoutubeId(r.youtubeId)
-    }
-    if (!fresh.length) return
-    setQuestions((qs) => [...qs, ...fresh.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
-    setImportText('')
-    setSource('edpuzzle')
-    touch()
-  }
-
-  // Arriving from the "Send to Oasis" bookmarklet: the data is in the #fragment (never sent to a
-  // server). It's untrusted, so it only pre-fills drafts; nothing is saved until the teacher clicks Save.
   const bookmarkletDone = useRef(false)
   useEffect(() => {
     if (!isNew || bookmarkletDone.current) return
@@ -239,16 +201,18 @@ export function LessonBuilder() {
     if (!p) return
     bookmarkletDone.current = true
     window.history.replaceState(null, '', window.location.pathname + window.location.search)
-    setFromBookmarklet(true)
-    addImport(p.text, p.yt)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const r = parseEdpuzzlePaste(p.text)
+    if (p.yt) r.youtubeId = p.yt
+    setImportNote({ added: r.questions.length, needAnswer: r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length, warnings: r.warnings })
+    if (r.youtubeId) {
+      setVideoInput(`https://youtu.be/${r.youtubeId}`)
+      setYoutubeId(r.youtubeId)
+    }
+    if (!r.questions.length) return
+    setQuestions(r.questions.map(toDraft).sort((a, b) => a.at_s - b.at_s))
+    setSource('edpuzzle')
+    touch()
   }, [isNew])
-
-  // React refuses javascript: URLs in JSX, so the bookmarklet link's href is set directly.
-  const bookmarkletRef = useRef<HTMLAnchorElement>(null)
-  useEffect(() => {
-    bookmarkletRef.current?.setAttribute('href', bookmarkletHref(window.location.origin))
-  })
 
   // ---- save
   const problems = (): string[] => {
@@ -332,50 +296,6 @@ export function LessonBuilder() {
     setStatus({ kind: 'ok', text: 'Saved.' })
   }
 
-  // Shown first when the teacher came here to import, otherwise tucked under the questions.
-  const fromEdpuzzle = searchParams.get('from') === 'edpuzzle'
-  const importPanel = (
-    <details className="card" open={fromEdpuzzle || undefined}>
-      <summary>Bring over an Edpuzzle lesson</summary>
-      <div className="stack small">
-        <p>
-          <strong>Fastest:</strong> drag this button to your bookmarks bar:{' '}
-          {/* href is set in an effect; clicking it here does nothing */}
-          <a ref={bookmarkletRef} className="button" onClick={(e) => e.preventDefault()} title="Drag me to your bookmarks bar">
-            Send to Oasis
-          </a>
-        </p>
-        <p className="muted">
-          Then open your lesson's questions in Edpuzzle and click the bookmark. It reads only the page you're looking at
-          (nothing is sent to Edpuzzle and Oasis never sees your Edpuzzle login) and brings the questions here for you to
-          check. If Edpuzzle changes their site or your school blocks bookmarklets, copy and paste instead:
-        </p>
-      </div>
-      <ol className="muted small">
-        <li>Open the lesson in Edpuzzle and click into the video's questions.</li>
-        <li>Select the questions (or the whole page) and copy.</li>
-        <li>Paste below. Times, questions and choices come over; anything else is ignored.</li>
-      </ol>
-      <p className="muted small">
-        Edpuzzle doesn't copy which answer is right unless you add a * or ✓ next to it, so you'll pick those here. Video
-        crops, notes, voiceovers and uploaded (non-YouTube) videos don't come over.
-      </p>
-      <textarea aria-label="Edpuzzle questions" rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={EDPUZZLE_IMPORT_EXAMPLE} />
-      <button onClick={() => addImport()} disabled={!importText.trim()}>Import questions</button>
-      {importNote && (
-        <div role="status" className="stack small">
-          {fromBookmarklet && <p className="muted">Brought over from your Edpuzzle page. Check every question before you save.</p>}
-          <p className={importNote.added ? 'ok' : 'error'}>
-            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : importNote.warnings.some((w) => w.startsWith('Skipped')) ? 'Nothing new to add.' : 'No questions found.'}
-            {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
-            {importNote.added > 0 && !youtubeId && ' Now paste the YouTube link at the top.'}
-          </p>
-          {importNote.warnings.length > 0 && <ul className="muted">{importNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
-        </div>
-      )}
-    </details>
-  )
-
   if (loading) return <p className="muted center">Loading…</p>
   if (loadFailed)
     return (
@@ -413,7 +333,15 @@ export function LessonBuilder() {
       {/* Locked while saving: edits made mid-save were silently replaced by the server copy (audit #8). */}
       <fieldset className="plain" disabled={saving || needsReload}>
 
-      {fromEdpuzzle && <section>{importPanel}</section>}
+      {importNote && (
+        <div role="status" className="card stack small">
+          <p className={importNote.added ? 'ok' : 'error'}>
+            {importNote.added ? `Brought over ${importNote.added} question${importNote.added === 1 ? '' : 's'} from your Edpuzzle page. Check every question before you save.` : 'No questions found on that Edpuzzle page.'}
+            {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
+          </p>
+          {importNote.warnings.length > 0 && <ul className="muted">{importNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+        </div>
+      )}
 
       <div className="builder-grid">
       <section className="stack builder-media">
@@ -444,10 +372,6 @@ export function LessonBuilder() {
           <label className="check">
             <input type="checkbox" checked={aiGrade} onChange={(e) => { setAiGrade(e.target.checked); touch() }} />
             Suggest grades for short answers with AI (you can always change them)
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} />
-            Share this lesson and its questions with other Oasis teachers
           </label>
         </div>
       </section>
@@ -537,7 +461,6 @@ export function LessonBuilder() {
           ))}
         </ol>
 
-        {!fromEdpuzzle && importPanel}
 
         <details className="card">
           <summary>Paste a bunch of questions at once</summary>

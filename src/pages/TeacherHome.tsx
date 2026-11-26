@@ -68,7 +68,6 @@ export function TeacherHome() {
             <h1 id="lessons-h">Lessons {loaded && lessons.length > 0 && <span className="count">{lessons.length}</span>}</h1>
           </div>
           <span className="row">
-            <Link className="button" to="/teacher/lessons/new?from=edpuzzle">Bring over an Edpuzzle</Link>
             <Link className="button" to="/teacher/lessons/new?ai=1">Sub plan with AI</Link>
             <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
           </span>
@@ -79,7 +78,6 @@ export function TeacherHome() {
             <LessonCard key={l.id} lesson={l} classes={classes} onChange={load} onError={setError} />
           ))}
         </ul>
-        <LessonLibrary />
       </section>
 
       <aside>
@@ -227,39 +225,3 @@ function localNow(): string {
 }
 
 
-type LibraryEntry = { id: string; title: string; subject: string }
-
-function LessonLibrary() {
-  const [shared, setShared] = useState<LibraryEntry[]>([])
-  const [starters, setStarters] = useState<LibraryEntry[]>([])
-  const [error, setError] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [filter, setFilter] = useState('')
-  useEffect(() => {
-    let active = true
-    Promise.all([
-      supabase.from('lessons').select('id,title,subject').eq('shared', true).order('title'),
-      supabase.from('starter_lessons').select('id,title,subject').order('title'),
-    ]).then(([library, catalog]) => {
-      if (!active) return
-      setShared(library.data ?? [])
-      setStarters(catalog.data ?? [])
-      setError(library.error || catalog.error ? 'Some library lessons could not be loaded.' : '')
-      setLoaded(true)
-    })
-    return () => { active = false }
-  }, [])
-  return <details className="card library">
-    <summary>Lesson library <span className="muted small">Starter lessons and ones other teachers shared</span></summary>
-    <label className="library-search">Search by title or subject <input className="text" value={filter} onChange={e => setFilter(e.target.value)} /></label>
-    {error && <p className="error" role="alert">{error}</p>}
-    {!loaded && <p className="muted">Loading lessons…</p>}
-    {([['Starter lessons', 'starter', starters], ['Shared by teachers', 'copy', shared]] as const).map(([heading, param, entries]) => {
-      const matches = entries.filter(e => (e.title + ' ' + e.subject).toLowerCase().includes(filter.trim().toLowerCase()))
-      return <section key={param}><h3>{heading}</h3>
-        {loaded && !error && !matches.length && <p className="muted small">No matching lessons.</p>}
-        <ul className="library-list">{matches.map(e => <li key={e.id}><Link to={'/teacher/lessons/new?' + param + '=' + e.id}>Use {e.title}</Link> · {e.subject}</li>)}</ul>
-      </section>
-    })}
-  </details>
-}

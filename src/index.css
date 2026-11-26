@@ -292,14 +292,6 @@ blockquote.short { margin: 6px 0; padding: 8px 12px; background: var(--surface);
 .beta-pill { font-weight: 700; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: #fff; background: var(--ink); padding: 1px 6px; border-radius: 3px; }
 @media print { .beta-banner { display: none; } }
 
-/* lesson library (teacher home) */
-details.library summary .muted { font-weight: 400; margin-left: 6px; }
-.library-search { display: grid; gap: 6px; font-weight: 700; font-size: .9375rem; margin-top: 14px; }
-details.library section { margin-top: 18px; }
-details.library h3 { font-size: 1rem; margin: 0 0 6px; }
-.library-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
-.library-list > li { padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
-.library-list a { font-weight: 600; }
 
 /* Unstyled wrapper used to lock a whole form (e.g. the builder while it saves). */
 fieldset.plain { border: 0; margin: 0; padding: 0; min-width: 0; }
