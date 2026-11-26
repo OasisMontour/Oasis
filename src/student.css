@@ -92,6 +92,7 @@
 .p-ctl:disabled { opacity: .4; cursor: default; }
 .p-ctl:focus-visible { outline: 3px solid var(--s-mint); outline-offset: 2px; }
 .p-track { position: relative; flex: 1; height: 10px; border-radius: 999px; background: repeating-linear-gradient(-45deg, #24302e 0 6px, #1b2524 6px 12px); cursor: pointer; }
+.p-track:focus-visible { outline: 2px solid var(--s-mint, #9fe3d6); outline-offset: 4px; }
 .p-watched { position: absolute; left: 0; top: 0; bottom: 0; background: #2f6f69; border-radius: 999px; }
 .p-head { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; background: #fff; border-radius: 2px; }
 .p-mark { position: absolute; top: -5px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: #1b2524; border: 2px solid var(--s-mint); pointer-events: none; }
