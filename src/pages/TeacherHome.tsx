@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
-import { invokeFn } from '../lib/invokeFn'
 import { useClassroomSync } from '../lib/useClassroomSync'
 import Brand from '../components/Brand'
+import { AssignDialog } from '../components/AssignDialog'
+import { checkClassroomPost, classroomStatus, makeClassroomDraft, type AssignmentLink } from '../lib/assign'
 
 type ClassRow = { id: string; name: string; enrollments: { count: number }[]; roster_entries: { count: number }[] }
 type LessonRow = {
   id: string
   title: string
   subject: string
+  class_id: string | null
   created_at: string
   questions: { count: number }[]
-  assignments: { id: string; class_id: string; due_at: string | null; google_coursework_id: string | null }[]
+  assignments: AssignmentLink[]
 }
 
 export function TeacherHome() {
@@ -30,7 +32,7 @@ export function TeacherHome() {
       supabase.from('classes').select('id, name, enrollments(count), roster_entries(count)').eq('teacher_id', profile.id).order('name'),
       supabase
         .from('lessons')
-        .select('id, title, subject, created_at, questions(count), assignments(id, class_id, due_at, google_coursework_id)')
+        .select('id, title, subject, class_id, created_at, questions(count), assignments(id, class_id, due_at, google_coursework_id, google_coursework_state, google_coursework_url)')
         .eq('teacher_id', profile.id)
         .order('created_at', { ascending: false }),
     ])
@@ -122,49 +124,25 @@ function LessonCard({
   onChange: () => void
   onError: (msg: string | null) => void
 }) {
-  const [classId, setClassId] = useState('')
-  const [due, setDue] = useState('')
+  const [assigning, setAssigning] = useState(false)
+  const [busy, setBusy] = useState(false)
   const assigned = new Set(lesson.assignments.map((a) => a.class_id))
-  const open = classes.filter((c) => !assigned.has(c.id))
   const nQuestions = lesson.questions[0]?.count ?? 0
 
-  const [busy, setBusy] = useState(false)
-
-  /** Post to Google Classroom. The assignment already exists in Oasis, so a failure here is retryable. */
-  const postToClassroom = async (assignmentId: string) => {
-    const { data, error } = await invokeFn<{ ok: boolean; error?: string }>('classroom', { action: 'post', assignment_id: assignmentId })
-    if (error || !data?.ok) {
-      const why = data?.error === 'not_connected' || data?.error === 'reconnect' ? 'Connect Google Classroom first, then click Retry.' : (data?.error ?? error?.message ?? '')
-      onError(`Assigned in Oasis, but posting to Google Classroom failed. ${why}`)
-    }
-  }
-
-  const assign = async (e: FormEvent) => {
-    e.preventDefault()
-    if (due && new Date(due).getTime() < Date.now()) return onError('That due date has already passed. Pick a time in the future.')
+  const draft = async (assignmentId: string) => {
     onError(null)
     setBusy(true)
-    const { data, error } = await supabase
-      .from('assignments')
-      .insert({ lesson_id: lesson.id, class_id: classId, due_at: due ? new Date(due).toISOString() : null })
-      .select('id')
-      .single()
-    if (error) {
-      setBusy(false)
-      return onError(error.message)
-    }
-    await postToClassroom(data.id)
+    const r = await makeClassroomDraft(assignmentId)
     setBusy(false)
-    setClassId('')
-    setDue('')
+    if (!r.ok) onError(`Assigned in Oasis, but the Google Classroom draft wasn't made. ${r.message}`)
     onChange()
   }
-
-  const retry = async (assignmentId: string) => {
+  const check = async (assignmentId: string) => {
     onError(null)
     setBusy(true)
-    await postToClassroom(assignmentId)
+    const r = await checkClassroomPost(assignmentId)
     setBusy(false)
+    if (!r.ok) onError(`Couldn't check Google Classroom. ${r.message}`)
     onChange()
   }
 
@@ -175,7 +153,7 @@ function LessonCard({
         <Link className="edit" to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
       </div>
       <div className="lesson-meta">
-        {lesson.subject && <span>{lesson.subject}</span>}
+        {lesson.class_id && <span>{classes.find((c) => c.id === lesson.class_id)?.name}</span>}
         <span className={nQuestions === 0 ? 'error' : undefined}>{nQuestions} question{nQuestions === 1 ? '' : 's'}</span>
       </div>
       {lesson.assignments.length > 0 && (
@@ -184,44 +162,53 @@ function LessonCard({
             <li key={a.id} className="row">
               <span>{classes.find((c) => c.id === a.class_id)?.name ?? 'A class'}</span>
               {a.due_at && <span className="muted">due {new Date(a.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>}
-              {a.google_coursework_id ? (
-                <span className="ok">Posted to Classroom</span>
-              ) : (
-                <>
-                  <span className="error">Not in Classroom yet</span>
-                  <button className="small" onClick={() => retry(a.id)} disabled={busy}>Retry</button>
-                </>
-              )}
+              <ClassroomBadge a={a} busy={busy} onDraft={() => void draft(a.id)} onCheck={() => void check(a.id)} />
               <Link to={`/teacher/assignments/${a.id}`}>Results</Link>
             </li>
           ))}
         </ul>
       )}
-      {open.length > 0 && (
-        <form className="row lesson-assign" onSubmit={assign}>
-          <select aria-label="Class" value={classId} onChange={(e) => setClassId(e.target.value)}>
-            <option value="">Assign to class…</option>
-            {open.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <label className="small">
-            Due <input type="datetime-local" className="text" value={due} min={localNow()} onChange={(e) => setDue(e.target.value)} />
-          </label>
-          <button disabled={busy || !classId || nQuestions === 0} title={nQuestions === 0 ? 'Add questions first' : undefined}>
-            {busy ? 'Posting…' : 'Assign + post to Classroom'}
-          </button>
-        </form>
+      {classes.some((c) => !assigned.has(c.id)) && (
+        <div className="lesson-assign">
+          <button onClick={() => setAssigning(true)}>Assign…</button>
+        </div>
+      )}
+      {assigning && (
+        <AssignDialog
+          lesson={{ id: lesson.id, title: lesson.title, questionCount: nQuestions }}
+          classes={classes}
+          assignedClassIds={assigned}
+          initialClassId={lesson.class_id}
+          onClose={() => setAssigning(false)}
+          onAssigned={onChange}
+        />
       )}
     </li>
   )
 }
 
-/** Now as a datetime-local value ("2026-11-23T08:05") in the teacher's time zone. */
-function localNow(): string {
-  const d = new Date()
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  return d.toISOString().slice(0, 16)
+/** Where an assignment stands in Google Classroom, with the next step. */
+export function ClassroomBadge({ a, busy, onDraft, onCheck }: { a: AssignmentLink; busy: boolean; onDraft: () => void; onCheck: () => void }) {
+  const st = classroomStatus(a)
+  if (st === 'PUBLISHED') return <span className="ok">Posted in Classroom</span>
+  if (st === 'DRAFT')
+    return (
+      <>
+        <span className="tag warn">Draft in Classroom</span>
+        {a.google_coursework_url && (
+          <a href={a.google_coursework_url} target="_blank" rel="noreferrer">
+            Pick a topic and post
+          </a>
+        )}
+        <button className="small" onClick={onCheck} disabled={busy}>Check</button>
+      </>
+    )
+  if (st === 'DELETED')
+    return <span className="error">Deleted in Classroom</span>
+  return (
+    <>
+      <span className="error">Not in Classroom yet</span>
+      <button className="small" onClick={onDraft} disabled={busy}>Make draft</button>
+    </>
+  )
 }
-
-

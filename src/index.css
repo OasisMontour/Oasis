@@ -296,3 +296,12 @@ blockquote.short { margin: 6px 0; padding: 8px 12px; background: var(--surface);
 /* Unstyled wrapper used to lock a whole form (e.g. the builder while it saves). */
 fieldset.plain { border: 0; margin: 0; padding: 0; min-width: 0; }
 fieldset.plain:disabled { opacity: 0.7; }
+
+/* ---------------------------------------------------------------- dialogs */
+.modal-back { position: fixed; inset: 0; background: rgb(16 32 30 / .45); display: grid; place-items: center; padding: 16px; z-index: 50; }
+.modal { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; display: grid; gap: 14px; box-shadow: 0 12px 40px rgb(16 32 30 / .25); }
+.modal h2 { margin: 0; }
+.modal ol { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.row.end { justify-content: flex-end; }
+.stack-tight { display: grid; gap: 4px; font-weight: 600; }
+.stack-tight > * { font-weight: 400; }

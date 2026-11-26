@@ -7,6 +7,8 @@ import { readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
 import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
 import { AiDraftPanel } from '../components/AiDraftPanel'
+import { AssignDialog, type AssignClass } from '../components/AssignDialog'
+import { useAuth } from '../auth/AuthProvider'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
 type Draft = DraftQuestion & { key: string; timeText: string }
@@ -18,14 +20,21 @@ export function LessonBuilder() {
   const { id } = useParams()
   const navigate = useNavigate()
   const isNew = !id
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { profile } = useAuth()
 
   const [videoInput, setVideoInput] = useState('')
   const [youtubeId, setYoutubeId] = useState<string | null>(null)
   const [duration, setDuration] = useState<number | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
+  // Free-text subject is gone from the form (beta item 5); it's kept as loaded for the planned shared library.
   const [subject, setSubject] = useState('')
+  // The class this lesson is for: only classes this teacher teaches. Carried into assignment.
+  const [classId, setClassId] = useState<string>(isNew ? (searchParams.get('class') ?? '') : '')
+  const [myClasses, setMyClasses] = useState<AssignClass[] | null>(null)
+  const [assignedTo, setAssignedTo] = useState<ReadonlySet<string>>(new Set())
+  const [assignOpen, setAssignOpen] = useState(false)
   // No share checkbox for the beta (item 2): new lessons are private, and a lesson that was already shared keeps
   // its setting on save. Changing existing sharing is a separate decision.
   const [shared, setShared] = useState(false)
@@ -56,7 +65,7 @@ export function LessonBuilder() {
     let active = true
     ;(async () => {
       let query = supabase.from('lessons')
-        .select('id, shared, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
+        .select('id, shared, title, subject, class_id, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric), assignments(class_id)')
         .eq('id', copyId || id)
       if (copyId) query = query.eq('shared', true)
       const { data, error } = await query.single()
@@ -70,6 +79,10 @@ export function LessonBuilder() {
       setDirty(Boolean(copyId))
       setTitle(data.title)
       setSubject(data.subject)
+      if (!copyId) {
+        setClassId(data.class_id ?? '')
+        setAssignedTo(new Set((data.assignments ?? []).map((a: { class_id: string }) => a.class_id)))
+      }
       setVideoInput(`https://youtu.be/${data.youtube_id}`)
       setYoutubeId(data.youtube_id)
       setDuration(Number(data.duration_s))
@@ -82,6 +95,29 @@ export function LessonBuilder() {
     })()
     return () => { active = false }
   }, [id, copyId])
+
+  // ---- the teacher's own classes, for the Class dropdown and assignment
+  useEffect(() => {
+    if (!profile) return
+    let active = true
+    supabase
+      .from('classes')
+      .select('id, name')
+      .eq('teacher_id', profile.id)
+      .order('name')
+      .then(({ data }) => active && setMyClasses((data as AssignClass[] | null) ?? []))
+    return () => {
+      active = false
+    }
+  }, [profile])
+
+  // Straight after a new lesson's first save: open assignment setup with its class picked (beta item 9).
+  useEffect(() => {
+    if (!isNew && searchParams.get('assign') === '1') {
+      setAssignOpen(true)
+      setSearchParams({}, { replace: true })
+    }
+  }, [isNew, searchParams, setSearchParams])
 
   // ---- warn before leaving with unsaved edits
   useEffect(() => {
@@ -241,6 +277,7 @@ export function LessonBuilder() {
         id: id ?? null,
         title: title.trim(),
         subject: subject.trim(),
+        class_id: classId || null,
         shared,
         youtube_id: youtubeId,
         duration_s: duration,
@@ -267,7 +304,7 @@ export function LessonBuilder() {
     if (isNew) {
       setSaving(false)
       setDirty(false)
-      navigate(`/teacher/lessons/${data}`, { replace: true })
+      navigate(`/teacher/lessons/${data}?assign=1`, { replace: true })
       return setStatus({ kind: 'ok', text: 'Saved.' })
     }
     // Reload so new questions pick up their ids. One retry: a missed read here means the next save
@@ -324,10 +361,27 @@ export function LessonBuilder() {
           ← Back
         </Link>
         <strong>{isNew ? 'New lesson' : 'Edit lesson'}</strong>
+        {!isNew && !needsReload && (
+          <button onClick={() => setAssignOpen(true)} disabled={saving || dirty} title={dirty ? 'Save your changes first' : undefined}>
+            Assign…
+          </button>
+        )}
         {needsReload
           ? <button className="primary" onClick={() => window.location.reload()}>Reload</button>
-          : <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>}
+          : <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : isNew ? 'Save and assign' : 'Save'}</button>}
       </header>
+      {assignOpen && id && myClasses && (
+        <AssignDialog
+          lesson={{ id, title: title.trim() || 'Untitled lesson', questionCount: questions.length }}
+          classes={myClasses}
+          assignedClassIds={assignedTo}
+          initialClassId={classId || null}
+          onClose={() => setAssignOpen(false)}
+          onAssigned={() =>
+            supabase.from('assignments').select('class_id').eq('lesson_id', id).then(({ data }) => data && setAssignedTo(new Set(data.map((a) => a.class_id))))
+          }
+        />
+      )}
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
 
       {/* Locked while saving: edits made mid-save were silently replaced by the server copy (audit #8). */}
@@ -362,8 +416,14 @@ export function LessonBuilder() {
             <input className="text" value={title} maxLength={200} onChange={(e) => { setTitle(e.target.value); touch() }} />
           </label>
           <label>
-            Subject
-            <input className="text" value={subject} onChange={(e) => { setSubject(e.target.value); touch() }} placeholder="Biology" />
+            Class
+            <select value={classId} onChange={(e) => { setClassId(e.target.value); touch() }} disabled={myClasses === null}>
+              <option value="">{myClasses?.length === 0 ? 'No classes yet (connect Google Classroom)' : 'Choose a class…'}</option>
+              {(myClasses ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+              {classId && myClasses && !myClasses.some((c) => c.id === classId) && <option value={classId}>A class you no longer teach</option>}
+            </select>
           </label>
           <label className="check">
             <input type="checkbox" checked={fullscreen} onChange={(e) => { setFullscreen(e.target.checked); touch() }} />

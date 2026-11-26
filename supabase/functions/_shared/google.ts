@@ -152,33 +152,54 @@ export async function fetchClassroomRosters(f: typeof fetch, token: string): Pro
   })
 }
 
+export type CourseworkRef = { id: string; state: string; url: string | null }
+
 /**
  * Coursework in this course that already links to `link`, if any. Classroom has no idempotency key, so this is
  * how a retry after a lost response avoids posting the same assignment twice.
  */
-export async function findCourseworkByLink(f: typeof fetch, token: string, courseId: string, link: string): Promise<string | null> {
-  const cws = await getAll<{ id: string; materials?: { link?: { url?: string } }[] }>(
+export async function findCourseworkByLink(f: typeof fetch, token: string, courseId: string, link: string): Promise<CourseworkRef | null> {
+  const cws = await getAll<{ id: string; state?: string; alternateLink?: string; materials?: { link?: { url?: string } }[] }>(
     f,
     token,
     `/courses/${encodeURIComponent(courseId)}/courseWork?courseWorkStates=PUBLISHED&courseWorkStates=DRAFT&orderBy=updateTime%20desc`,
     'courseWork',
   )
-  return cws.find((c) => c.materials?.some((m) => m.link?.url === link))?.id ?? null
+  const c = cws.find((c) => c.materials?.some((m) => m.link?.url === link))
+  return c ? { id: c.id, state: c.state ?? 'PUBLISHED', url: c.alternateLink ?? null } : null
+}
+
+/** One piece of coursework's state (DRAFT / PUBLISHED / DELETED) and its link. null if Google says it's gone. */
+export async function getCoursework(f: typeof fetch, token: string, courseId: string, courseworkId: string): Promise<CourseworkRef | null> {
+  const res = await getWithRetry(f, `${API}/courses/${encodeURIComponent(courseId)}/courseWork/${encodeURIComponent(courseworkId)}`, token)
+  if (res.status === 404) return null
+  if (!res.ok) throw await googleError(res, 'reading the assignment')
+  const c = (await res.json()) as { id: string; state?: string; alternateLink?: string }
+  return { id: c.id, state: c.state ?? 'PUBLISHED', url: c.alternateLink ?? null }
+}
+
+/** The course's own page in Classroom (Google's link, not one we build). */
+export async function getCourseLink(f: typeof fetch, token: string, courseId: string): Promise<string | null> {
+  const res = await getWithRetry(f, `${API}/courses/${encodeURIComponent(courseId)}`, token)
+  if (!res.ok) return null
+  return ((await res.json()) as { alternateLink?: string }).alternateLink ?? null
 }
 
 export type CourseworkInput = { title: string; description: string; link: string; dueAt: string | null }
 
 /**
- * Posts an assignment to a Classroom course. Due dates go to Classroom in UTC, which is what its API wants.
- * maxPoints is 100 so grade sync can pass the Oasis score straight through.
+ * Creates the assignment in a Classroom course as an unpublished DRAFT (beta item 10): the teacher picks a
+ * Classwork topic and posts it in Classroom. Never falls back to publishing: if Google won't make a draft, this
+ * throws and nothing is posted. Due dates go to Classroom in UTC, which is what its API wants. maxPoints is 100
+ * so grade sync can pass the Oasis score straight through.
  */
-export async function createCoursework(f: typeof fetch, token: string, courseId: string, cw: CourseworkInput): Promise<string> {
+export async function createCoursework(f: typeof fetch, token: string, courseId: string, cw: CourseworkInput): Promise<CourseworkRef> {
   const body: Record<string, unknown> = {
     title: cw.title.slice(0, 3000),
-    description: cw.description,
+    description: cw.description.slice(0, 30000),
     materials: [{ link: { url: cw.link } }],
     workType: 'ASSIGNMENT',
-    state: 'PUBLISHED',
+    state: 'DRAFT',
     maxPoints: 100,
   }
   if (cw.dueAt) {
@@ -191,10 +212,10 @@ export async function createCoursework(f: typeof fetch, token: string, courseId:
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw await googleError(res, 'the assignment')
-  const out = (await res.json().catch(() => ({}))) as { id?: string }
+  if (!res.ok) throw await googleError(res, 'the draft assignment')
+  const out = (await res.json().catch(() => ({}))) as { id?: string; state?: string; alternateLink?: string }
   if (!out.id) throw new Error(`Google Classroom didn't return an id for the new assignment (${res.status})`)
-  return out.id
+  return { id: out.id, state: out.state ?? 'DRAFT', url: out.alternateLink ?? null }
 }
 
 type GStudentId = { userId: string; profile: { emailAddress?: string } }

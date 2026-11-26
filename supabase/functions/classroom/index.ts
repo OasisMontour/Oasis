@@ -69,12 +69,26 @@ Deno.serve(async (req) => {
       const row = must(
         await asCaller(authHeader)
           .from('assignments')
-          .select('id, due_at, google_coursework_id, lessons(title), classes(google_course_id, teacher_id)')
+          .select('id, due_at, instructions, google_coursework_id, lessons(title), classes(google_course_id, teacher_id)')
           .eq('id', id)
           .maybeSingle(),
-      ) as null | { id: string; due_at: string | null; google_coursework_id: string | null; lessons: { title: string }; classes: { google_course_id: string } }
+      ) as null | {
+        id: string
+        due_at: string | null
+        instructions: string
+        google_coursework_id: string | null
+        lessons: { title: string }
+        classes: { google_course_id: string }
+      }
       if (!row) return null
-      return { id: row.id, lessonTitle: row.lessons.title, courseId: row.classes.google_course_id, dueAt: row.due_at, courseworkId: row.google_coursework_id }
+      return {
+        id: row.id,
+        lessonTitle: row.lessons.title,
+        courseId: row.classes.google_course_id,
+        dueAt: row.due_at,
+        courseworkId: row.google_coursework_id,
+        instructions: row.instructions,
+      }
     },
     async getGradesToPush(authHeader, id) {
       // Scores aren't readable over REST (students would see their own); grades_to_push checks the caller teaches the class.
@@ -90,9 +104,18 @@ Deno.serve(async (req) => {
         grades: g.grades.map((x) => ({ email: x.email, score: Number(x.score), ungraded: Number(x.ungraded) })),
       }
     },
-    async setCourseworkId(authHeader, id, cwid) {
+    async setCourseworkId(authHeader, id, cwid, status) {
       // Only if still empty, so a late duplicate call can't overwrite the id Classroom students already have.
-      must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id).is('google_coursework_id', null))
+      must(
+        await asCaller(authHeader)
+          .from('assignments')
+          .update({ google_coursework_id: cwid, google_coursework_state: status.state, google_coursework_url: status.url })
+          .eq('id', id)
+          .is('google_coursework_id', null),
+      )
+    },
+    async setCourseworkStatus(authHeader, id, status) {
+      must(await asCaller(authHeader).from('assignments').update({ google_coursework_state: status.state, google_coursework_url: status.url }).eq('id', id))
     },
   })
   for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)

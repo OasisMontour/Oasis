@@ -6,7 +6,9 @@
 // POST { action: 'connect', refresh_token } -> verifies + stores the teacher's Google refresh token, then syncs
 // POST { action: 'sync' }                   -> imports Classroom courses + rosters with the stored token
 // POST { action: 'disconnect' }             -> revokes the token at Google and deletes it
-// POST { action: 'post', assignment_id }    -> posts an Oasis assignment to its Classroom course (idempotent)
+// POST { action: 'post', assignment_id }    -> creates the assignment in its Classroom course as an unpublished DRAFT
+//                                             (idempotent; never publishes). The teacher picks a topic and posts it there.
+// POST { action: 'post_status', assignment_id } -> asks Classroom whether that draft has been posted yet
 // POST { action: 'push_grades', assignment_id } -> writes finished, fully graded students' scores to Classroom as draft + assigned grades
 //                                               (teachers still press Return in Classroom for students to see them)
 //
@@ -20,6 +22,8 @@ import {
   fetchClassroomRosters,
   fetchHostedDomain,
   findCourseworkByLink,
+  getCourseLink,
+  getCoursework,
   GoogleApiError,
   InvalidGrantError,
   listCourseStudentIds,
@@ -32,7 +36,20 @@ import {
 
 export type SyncResult = { created: number; updated: number; newly_enrolled: number; removed: number; skipped: string[]; hidden_emails?: number }
 
-export type AssignmentToPost = { id: string; lessonTitle: string; courseId: string; dueAt: string | null; courseworkId: string | null }
+export type AssignmentToPost = {
+  id: string
+  lessonTitle: string
+  courseId: string
+  dueAt: string | null
+  courseworkId: string | null
+  /** What the teacher typed in assignment setup; empty = the default text. */
+  instructions?: string
+}
+
+/** Where the teacher finishes a draft: the coursework's own link once Google gives one, else the class page. */
+export type CourseworkStatus = { state: 'DRAFT' | 'PUBLISHED' | 'DELETED'; url: string | null }
+
+export const DEFAULT_INSTRUCTIONS = 'Video lesson in Oasis. Open the link, watch the whole video, and answer the questions as they come up.'
 
 export type GradesToPush = {
   courseId: string
@@ -78,7 +95,9 @@ export type Deps = {
   /** Read as the caller. null if not found/not theirs. Only finished attempts with a score. */
   getGradesToPush(authHeader: string, assignmentId: string): Promise<GradesToPush | null>
   /** Written as the caller. */
-  setCourseworkId(authHeader: string, assignmentId: string, courseworkId: string): Promise<void>
+  setCourseworkId(authHeader: string, assignmentId: string, courseworkId: string, status: CourseworkStatus): Promise<void>
+  /** Written as the caller: the latest state Classroom reports for an already-linked assignment. */
+  setCourseworkStatus(authHeader: string, assignmentId: string, status: CourseworkStatus): Promise<void>
 }
 
 /** Where a Classroom assignment sends students. The student player must serve this route. */
@@ -158,6 +177,16 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
     }
   }
 
+  const toStatus = (state: string, url: string | null): CourseworkStatus => ({
+    state: state === 'DRAFT' ? 'DRAFT' : state === 'DELETED' ? 'DELETED' : 'PUBLISHED',
+    url,
+  })
+  const courseworkStatus = async (token: string, courseId: string, courseworkId: string): Promise<CourseworkStatus> => {
+    const cw = await getCoursework(d.fetch, token, courseId, courseworkId)
+    if (!cw) return { state: 'DELETED', url: await getCourseLink(d.fetch, token, courseId) }
+    return toStatus(cw.state, cw.url ?? (await getCourseLink(d.fetch, token, courseId)))
+  }
+
   try {
     if (body.action === 'claim_teacher') {
       const t = await freshAccess(body.refresh_token)
@@ -224,18 +253,32 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const link = studentAssignmentUrl(d.env.appOrigin, asg.id)
       // A previous call may have created it and then lost the response (school Wi-Fi, timeout): reuse it
       // rather than give students two copies.
-      const cwid =
+      const cw =
         (await findCourseworkByLink(d.fetch, a.token, asg.courseId, link)) ??
         (await createCoursework(d.fetch, a.token, asg.courseId, {
           title: asg.lessonTitle,
-          description: 'Video lesson in Oasis. Open the link, watch the whole video, and answer the questions as they come up.',
+          description: [asg.instructions?.trim() || DEFAULT_INSTRUCTIONS, `Open the lesson: ${link}`].join('\n\n'),
           link,
           // A retry after the due date would send Classroom a date in the past; post without one instead.
           dueAt: asg.dueAt && new Date(asg.dueAt).getTime() > Date.now() ? asg.dueAt : null,
         }))
-      await d.setCourseworkId(auth, asg.id, cwid)
+      const status = toStatus(cw.state, cw.url ?? (await getCourseLink(d.fetch, a.token, asg.courseId)))
+      await d.setCourseworkId(auth, asg.id, cw.id, status)
       await d.markUsed(caller.id)
-      return json({ ok: true, coursework_id: cwid })
+      return json({ ok: true, coursework_id: cw.id, state: status.state, url: status.url })
+    }
+
+    if (body.action === 'post_status') {
+      const id = body.assignment_id
+      if (!id || typeof id !== 'string') return json({ ok: false, error: 'missing assignment_id' }, 400)
+      const asg = await d.getAssignment(auth, id)
+      if (!asg) return json({ ok: false, error: 'not your assignment' }, 404)
+      if (!asg.courseworkId) return json({ ok: false, error: 'not_posted' })
+      const a = await storedAccess()
+      if ('res' in a) return a.res
+      const status = await courseworkStatus(a.token, asg.courseId, asg.courseworkId)
+      await d.setCourseworkStatus(auth, asg.id, status)
+      return json({ ok: true, state: status.state, url: status.url })
     }
 
     if (body.action === 'push_grades') {
@@ -247,6 +290,11 @@ export async function handleClassroom(req: Request, d: Deps): Promise<Response> 
       const courseworkId = g.courseworkId
       const a = await storedAccess()
       if ('res' in a) return a.res
+      // Oasis makes a Classroom draft; students only get submissions (and grades a place to go) once the teacher
+      // posts it in Classroom. Say so instead of reporting every student as "not in Classroom".
+      const status = await courseworkStatus(a.token, g.courseId, courseworkId)
+      await d.setCourseworkStatus(auth, id, status)
+      if (status.state !== 'PUBLISHED') return json({ ok: false, error: status.state === 'DRAFT' ? 'not_published' : 'deleted_in_classroom', url: status.url })
       const userIds = await listCourseStudentIds(d.fetch, a.token, g.courseId)
       const subByUser = new Map((await listSubmissions(d.fetch, a.token, g.courseId, courseworkId)).map((s) => [s.userId, s.id]))
       const notInClassroom: string[] = []

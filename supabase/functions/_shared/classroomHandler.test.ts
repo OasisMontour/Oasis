@@ -19,6 +19,7 @@ function setup(
     existingCoursework?: { id: string; materials?: { link?: { url?: string } }[] }[]
     profileStatus?: number
     importFails?: boolean
+    draftFails?: boolean
   } = {},
 ) {
   const claims: TeacherEvidence[] = []
@@ -34,7 +35,16 @@ function setup(
     { email: 'bob@d.org', score: 70 },
     { email: 'ghost@d.org', score: 50 },
   ]
-  const asg = { id: 'as1', lessonTitle: 'Cells', courseId: 'gc1', dueAt: '2026-12-08T04:59:00.000Z', courseworkId: null as string | null }
+  const asg = {
+    id: 'as1',
+    lessonTitle: 'Cells',
+    courseId: 'gc1',
+    dueAt: '2026-12-08T04:59:00.000Z',
+    courseworkId: null as string | null,
+    instructions: '',
+    status: null as null | { state: string; url: string | null },
+  }
+  let cwState: string | null = 'PUBLISHED' // what Google says about cw1 when asked; null = 404
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     calls.push(url.split('?')[0])
@@ -49,9 +59,14 @@ function setup(
     }
     if ((init?.headers as Record<string, string>)?.Authorization !== 'Bearer acc') return new Response('', { status: 401 })
     if (url.includes('/courseWork') && init?.method === 'POST') {
-      posted.push({ url, body: JSON.parse(String(init.body)) })
-      return Response.json({ id: 'cw1' })
+      const body = JSON.parse(String(init.body))
+      posted.push({ url, body })
+      if (opts.draftFails) return Response.json({ error: { status: 'INVALID_ARGUMENT', message: 'nope' } }, { status: 400 })
+      return Response.json({ id: 'cw1', state: body.state })
     }
+    if (url === 'https://classroom.googleapis.com/v1/courses/gc1') return Response.json({ id: 'gc1', alternateLink: 'https://classroom.google.com/c/R0Mx' })
+    if (url === 'https://classroom.googleapis.com/v1/courses/gc1/courseWork/cw1')
+      return cwState === null ? new Response('', { status: 404 }) : Response.json({ id: 'cw1', state: cwState, ...(cwState === 'PUBLISHED' ? { alternateLink: 'https://classroom.google.com/c/R0Mx/a/Y3cx/details' } : {}) })
     if (url.includes('/studentSubmissions') && init?.method === 'PATCH') {
       if ((opts.failGradeFor ?? []).some((id) => url.includes(`/studentSubmissions/${id}?`))) return Response.json({ error: { message: 'nope' } }, { status: 403 })
       patched.push({ url, body: JSON.parse(String(init.body)) })
@@ -88,13 +103,17 @@ function setup(
     },
     getAssignment: async (_h, id) => (id === asg.id ? { ...asg } : null),
     getGradesToPush: async (_h, id) => (id === asg.id ? { courseId: asg.courseId, courseworkId: asg.courseworkId, grades: [...grades] } : null),
-    setCourseworkId: async (_h, _id, cw) => void (asg.courseworkId = cw),
+    setCourseworkId: async (_h, _id, cw, st) => {
+      asg.courseworkId = cw
+      asg.status = st
+    },
+    setCourseworkStatus: async (_h, _id, st) => void (asg.status = st),
   }
   const call = async (body: unknown, auth = 'Bearer jwt') => {
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { claims, revoked, setRoster: (r: unknown[]) => void (roster = r), store, calls, imported, posted, patched, grades, asg, call }
+  return { claims, revoked, setRoster: (r: unknown[]) => void (roster = r), setCwState: (v: string | null) => void (cwState = v), store, calls, imported, posted, patched, grades, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -220,23 +239,55 @@ describe('teacher sign-up (claim_teacher)', () => {
 })
 
 describe('auto-post to Classroom', () => {
-  it('posts the assignment with a link, due date in UTC and 100 points, then records the coursework id', async () => {
+  it('creates an unpublished draft with a link, due date in UTC and 100 points, then records the coursework id', async () => {
     const t = setup()
     await t.call({ action: 'connect', refresh_token: 'good-refresh' })
     const r = await t.call({ action: 'post', assignment_id: 'as1' })
-    expect(r.body).toEqual({ ok: true, coursework_id: 'cw1' })
+    expect(r.body).toEqual({ ok: true, coursework_id: 'cw1', state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
     expect(t.posted).toHaveLength(1)
     expect(t.posted[0].url).toBe('https://classroom.googleapis.com/v1/courses/gc1/courseWork')
     expect(t.posted[0].body).toMatchObject({
       title: 'Cells',
       workType: 'ASSIGNMENT',
-      state: 'PUBLISHED',
+      state: 'DRAFT',
       maxPoints: 100,
       materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }],
       dueDate: { year: 2026, month: 12, day: 8 },
       dueTime: { hours: 4, minutes: 59 },
     })
     expect(t.asg.courseworkId).toBe('cw1')
+    expect(t.asg.status).toEqual({ state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
+    expect(t.posted[0].body.description).toContain('https://oasis.test/student/assignments/as1')
+  })
+
+  it("puts the teacher's instructions in the draft", async () => {
+    const t = setup()
+    t.asg.instructions = 'Sub day: watch and answer. Due by Friday.'
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(t.posted[0].body.description).toMatch(/^Sub day: watch and answer\. Due by Friday\.\n\nOpen the lesson: https:\/\/oasis\.test\/student\/assignments\/as1$/)
+  })
+
+  it('never falls back to publishing when Google refuses the draft', async () => {
+    const t = setup({ draftFails: true })
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    const r = await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(r.body).toMatchObject({ ok: false, google_status: 400 })
+    expect(t.posted.map((p) => p.body.state)).toEqual(['DRAFT'])
+    expect(t.asg.courseworkId).toBeNull()
+  })
+
+  it('post_status reports when the teacher has posted the draft in Classroom', async () => {
+    const t = setup()
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    t.setCwState('DRAFT')
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body).toEqual({ ok: true, state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
+    t.setCwState('PUBLISHED')
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body).toEqual({ ok: true, state: 'PUBLISHED', url: 'https://classroom.google.com/c/R0Mx/a/Y3cx/details' })
+    expect(t.asg.status?.state).toBe('PUBLISHED')
+    t.setCwState(null)
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body.state).toBe('DELETED')
   })
 
   it('never posts the same assignment twice', async () => {
@@ -311,6 +362,15 @@ describe('push grades', () => {
     expect(t.patched).toHaveLength(1)
   })
 
+  it('waits for the teacher to post the Classroom draft before sending grades', async () => {
+    const t = await ready()
+    t.setCwState('DRAFT')
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body).toEqual({ ok: false, error: 'not_published', url: 'https://classroom.google.com/c/R0Mx' })
+    expect(t.patched).toHaveLength(0)
+    expect(t.asg.status?.state).toBe('DRAFT')
+  })
+
   it('needs the assignment posted, a connection, and ownership', async () => {
     const t = setup()
     expect((await t.call({ action: 'push_grades', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_posted' })
@@ -362,7 +422,7 @@ describe('token encryption', () => {
   it('reuses coursework a lost earlier response already created instead of posting twice', async () => {
     const t = setup({ existingCoursework: [{ id: 'cw-old', materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }] }] })
     t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
-    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: true, coursework_id: 'cw-old' })
+    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: true, coursework_id: 'cw-old', state: 'PUBLISHED', url: 'https://classroom.google.com/c/R0Mx' })
     expect(t.posted).toHaveLength(0)
     expect(t.asg.courseworkId).toBe('cw-old')
   })
