@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
 import { startUsageTracking } from '../lib/usage'
+import { accountState } from './accountState'
 import { CLASSROOM_SCOPES } from '../../supabase/functions/_shared/scopes.ts'
 
 type AuthState = {
@@ -10,6 +11,9 @@ type AuthState = {
   profile: Profile | null
   /** UI hint only (shows the Admin link). Every admin RPC re-checks on the server. */
   isAdmin: boolean
+  /** Looking up the profile / admin status failed. Guards show a retry instead of guessing. */
+  profileError: boolean
+  adminError: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
   /**
@@ -27,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [profileError, setProfileError] = useState(false)
+  const [adminError, setAdminError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [profileVersion, setProfileVersion] = useState(0)
 
@@ -63,8 +69,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ]).then(([p, a]) => {
       if (cancelled) return
       if (p.error) console.error('Could not load profile', p.error)
-      setProfile((p.data as Profile) ?? null)
-      setIsAdmin(a.data === true)
+      const st = accountState(p as { data: Profile | null; error: { code?: string; message?: string } | null }, a)
+      setProfile(st.profile)
+      setIsAdmin(st.isAdmin)
+      setProfileError(st.profileError)
+      setAdminError(st.adminError)
       setLoading(false)
     })
     return () => {
@@ -111,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ loading, session, profile, isAdmin, signInWithGoogle, signOut, connectClassroom, refreshProfile: () => setProfileVersion((v) => v + 1) }}
+      value={{ loading, session, profile, isAdmin, profileError, adminError, signInWithGoogle, signOut, connectClassroom, refreshProfile: () => setProfileVersion((v) => v + 1) }}
     >
       {children}
     </AuthContext.Provider>

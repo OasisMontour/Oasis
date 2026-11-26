@@ -110,6 +110,12 @@ export function TeacherHome() {
             <h2 id="classes-h">Classes {classes.length > 0 && <span className="count">{classes.length}</span>}</h2>
             {classroom.connected && <Link to="/teacher/settings" className="small">Classroom settings</Link>}
           </div>
+          {classroom.statusError && classroom.connected === null && (
+            <div className="card stack">
+              <p className="error small" role="status">Couldn't check your Google Classroom connection. Your classes below are still here.</p>
+              <button onClick={classroom.recheck}>Check Google Classroom again</button>
+            </div>
+          )}
           {classroom.connected === false && (
             <div className="card stack">
               <p className="small">Your classes and students come from Google Classroom.</p>

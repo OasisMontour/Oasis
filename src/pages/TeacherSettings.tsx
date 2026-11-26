@@ -17,7 +17,15 @@ export function TeacherSettings() {
 
       <section aria-labelledby="gc-h" className="card stack">
         <h2 id="gc-h">Google Classroom</h2>
-        {classroom.connected === null && <p className="muted">Checking…</p>}
+        {classroom.connected === null &&
+          (classroom.statusError ? (
+            <div className="stack">
+              <p className="error" role="status">Couldn't check your Google Classroom connection.</p>
+              <button onClick={classroom.recheck}>Check again</button>
+            </div>
+          ) : (
+            <p className="muted">Checking…</p>
+          ))}
         {classroom.connected === false && (
           <>
             <p>Not connected. Your classes and students come from Google Classroom.</p>

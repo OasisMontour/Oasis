@@ -15,10 +15,13 @@ export function ReportBug() {
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [mine, setMine] = useState<MyBug[]>([])
+  const [historyError, setHistoryError] = useState(false)
 
   const load = useCallback(async () => {
-    const { data } = await supabase.rpc('my_bug_reports')
-    setMine((data as MyBug[]) ?? [])
+    const { data, error } = await supabase.rpc('my_bug_reports')
+    // On failure keep whatever was showing and say so, instead of an empty list (audit #30).
+    setHistoryError(!!error)
+    if (!error) setMine((data as MyBug[]) ?? [])
   }, [])
   useEffect(() => {
     load()
@@ -77,6 +80,12 @@ export function ReportBug() {
         <button className="primary" disabled={busy || text.trim().length < 5}>{busy ? 'Sending…' : 'Send report'}</button>
       </form>
 
+      {historyError && (
+        <p className="error" role="alert">
+          Couldn't load your past reports.{sent ? ' Your new report was sent.' : ''}{' '}
+          <button className="small" onClick={() => load()}>Try again</button>
+        </p>
+      )}
       {mine.length > 0 && (
         <section>
           <h2>Your reports</h2>
