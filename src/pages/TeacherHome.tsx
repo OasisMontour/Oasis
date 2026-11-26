@@ -1,41 +1,50 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
-import { invokeFn } from '../lib/invokeFn'
-import { useClassroomSync } from '../lib/useClassroomSync'
-import Brand from '../components/Brand'
+import { ROSTER_SYNC_EVENT, useClassroomSync } from '../lib/useClassroomSync'
+import { AssignDialog } from '../components/AssignDialog'
+import { TeacherBar } from '../components/TeacherBar'
+import { checkClassroomPost, classroomStatus, makeClassroomDraft, type AssignmentLink } from '../lib/assign'
+import { formatTime } from '../lib/time'
 
-type ClassRow = { id: string; name: string; enrollments: { count: number }[]; roster_entries: { count: number }[] }
+export type ClassRow = { id: string; name: string; enrollments: { count: number }[]; roster_entries: { count: number }[]; assignments: { count: number }[] }
 type LessonRow = {
   id: string
   title: string
-  subject: string
+  class_id: string | null
+  youtube_id: string
+  duration_s: number
   created_at: string
   questions: { count: number }[]
-  assignments: { id: string; class_id: string; due_at: string | null; google_coursework_id: string | null }[]
+  assignments: AssignmentLink[]
 }
 
+/**
+ * Teacher home (beta item 1): the teacher's own lessons as one scannable, full-width list, and their Google
+ * Classroom classes beside it. Each class opens its own page, where lessons can be assigned to it.
+ */
 export function TeacherHome() {
-  const { profile, isAdmin, signOut } = useAuth()
+  const { profile } = useAuth()
   const [classes, setClasses] = useState<ClassRow[]>([])
   const [lessons, setLessons] = useState<LessonRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
   const load = useCallback(async () => {
     if (!profile) return
     // teacher_id filter matters: RLS also lets teachers read *shared* lessons from other teachers.
     const [c, l] = await Promise.all([
-      supabase.from('classes').select('id, name, enrollments(count), roster_entries(count)').eq('teacher_id', profile.id).order('name'),
+      supabase.from('classes').select('id, name, enrollments(count), roster_entries(count), assignments(count)').eq('teacher_id', profile.id).order('name'),
       supabase
         .from('lessons')
-        .select('id, title, subject, created_at, questions(count), assignments(id, class_id, due_at, google_coursework_id)')
+        .select('id, title, class_id, youtube_id, duration_s, created_at, questions(count), assignments(id, class_id, due_at, google_coursework_id, google_coursework_state, google_coursework_url)')
         .eq('teacher_id', profile.id)
         .order('created_at', { ascending: false }),
     ])
-    // Only report load errors here. Clearing would also wipe an action's error (e.g. "posting to Classroom
-    // failed"), because every action reloads the dashboard right after reporting it.
+    // Only report load errors here. Clearing would also wipe an action's error (e.g. "Classroom draft failed"),
+    // because every action reloads the dashboard right after reporting it.
     const loadError = c.error?.message ?? l.error?.message
     if (loadError) setError(`Couldn't load your dashboard: ${loadError}`)
     setClasses((c.data as ClassRow[]) ?? [])
@@ -45,80 +54,101 @@ export function TeacherHome() {
 
   useEffect(() => {
     load()
+    const onSync = () => void load()
+    window.addEventListener(ROSTER_SYNC_EVENT, onSync)
+    return () => window.removeEventListener(ROSTER_SYNC_EVENT, onSync)
   }, [load])
 
+  // Handles the return from Google's consent screen; regular syncs run in the background (RosterAutoSync).
   const classroom = useClassroomSync(load)
 
+  const shown = useMemo(() => {
+    const f = filter.trim().toLowerCase()
+    if (!f) return lessons
+    const className = (id: string | null) => classes.find((c) => c.id === id)?.name ?? ''
+    return lessons.filter((l) => `${l.title} ${className(l.class_id)}`.toLowerCase().includes(f))
+  }, [lessons, classes, filter])
+
   return (
-    <main className="page">
-      <header className="bar">
-        <Brand />
-        <span className="muted">{profile?.email}</span>
-        <Link to="/report?from=%2Fteacher">Report a bug</Link>
-        {isAdmin && <Link className="button" to="/admin">Admin</Link>}
-        <button onClick={signOut}>Sign out</button>
-      </header>
+    <main className="page wide">
+      <TeacherBar />
       {error && <p className="error" role="alert">{error}</p>}
+      {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
 
-      <div className="teacher-grid">
-      <section aria-labelledby="lessons-h">
-        <div className="section-head">
-          <div>
-            {profile?.name && <p className="eyebrow">{profile.name}</p>}
-            <h1 id="lessons-h">Lessons {loaded && lessons.length > 0 && <span className="count">{lessons.length}</span>}</h1>
+      <div className="dash-head">
+        <div>
+          {profile?.name && <p className="eyebrow">{profile.name}</p>}
+          <h1>Your lessons {loaded && lessons.length > 0 && <span className="count">{lessons.length}</span>}</h1>
+        </div>
+        <span className="row">
+          <Link className="button" to="/teacher/lessons/new?ai=1">Sub plan with AI</Link>
+          <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
+        </span>
+      </div>
+
+      <div className="dash-grid">
+        <section aria-label="Your lessons" className="dash-lessons">
+          {lessons.length > 4 && (
+            <label className="dash-filter">
+              <span className="sr-only">Find a lesson</span>
+              <input className="text" type="search" placeholder="Find a lesson by title or class" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            </label>
+          )}
+          {loaded && lessons.length === 0 && (
+            <p className="empty">No lessons yet. Paste a YouTube link to make your first one, or draft a sub plan with AI.</p>
+          )}
+          {loaded && lessons.length > 0 && shown.length === 0 && <p className="muted">No lessons match “{filter}”.</p>}
+          <ul className="lesson-list" hidden={shown.length === 0}>
+            {shown.map((l) => (
+              <LessonRowItem key={l.id} lesson={l} classes={classes} onChange={load} onError={setError} />
+            ))}
+          </ul>
+        </section>
+
+        <aside aria-labelledby="classes-h" className="dash-classes">
+          <div className="section-head">
+            <h2 id="classes-h">Classes {classes.length > 0 && <span className="count">{classes.length}</span>}</h2>
+            {classroom.connected && <Link to="/teacher/settings" className="small">Classroom settings</Link>}
           </div>
-          <span className="row">
-            <Link className="button" to="/teacher/lessons/new?from=edpuzzle">Bring over an Edpuzzle</Link>
-            <Link className="button primary" to="/teacher/lessons/new">New lesson</Link>
-          </span>
-        </div>
-        {loaded && lessons.length === 0 && <p className="empty">No lessons yet. Paste a YouTube link to make your first one.</p>}
-        <ul className="cards" hidden={lessons.length === 0}>
-          {lessons.map((l) => (
-            <LessonCard key={l.id} lesson={l} classes={classes} onChange={load} onError={setError} />
-          ))}
-        </ul>
-        <LessonLibrary />
-      </section>
-
-      <aside>
-        <div className="section-head">
-          <h2>Classes</h2>
-          <span className="row">
-            {classroom.statusError && classroom.connected === null && (
+          {classroom.statusError && classroom.connected === null && (
+            <div className="card stack">
+              <p className="error small" role="status">Couldn't check your Google Classroom connection. Your classes below are still here.</p>
               <button onClick={classroom.recheck}>Check Google Classroom again</button>
-            )}
-            {classroom.connected === false && <button onClick={classroom.connect}>Connect Google Classroom</button>}
-            {classroom.connected && (
-              <>
-                <button onClick={classroom.syncNow} disabled={classroom.busy}>{classroom.busy ? 'Syncing…' : 'Sync Google Classroom'}</button>
-                <button className="small" onClick={classroom.disconnect} disabled={classroom.busy}>Disconnect</button>
-              </>
-            )}
-          </span>
-        </div>
-        {classroom.statusError && classroom.connected === null && (
-          <p className="error" role="status">Couldn't check your Google Classroom connection. Your classes below are still here.</p>
-        )}
-        {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
-        {loaded && classes.length === 0 && <p className="empty small">No classes yet. Your classes and students come from Google Classroom: connect it above and they'll show up here.</p>}
-        <ul className="cards" hidden={classes.length === 0}>
-          {classes.map((c) => (
-            <li key={c.id}>
-              <strong>{c.name}</strong>
-              <span className="muted small">
-                {c.roster_entries[0]?.count ?? 0} students, {c.enrollments[0]?.count ?? 0} signed in
-              </span>
-            </li>
-          ))}
-        </ul>
-      </aside>
+            </div>
+          )}
+          {classroom.connected === false && (
+            <div className="card stack">
+              <p className="small">Your classes and students come from Google Classroom.</p>
+              <button className="primary" onClick={classroom.connect}>Connect Google Classroom</button>
+            </div>
+          )}
+          {loaded && classroom.connected && classes.length === 0 && (
+            <p className="empty small">No active classes in your Google Classroom yet. They show up here a few minutes after you make one.</p>
+          )}
+          <ul className="class-list" hidden={classes.length === 0}>
+            {classes.map((c) => {
+              const roster = c.roster_entries[0]?.count ?? 0
+              const signedIn = c.enrollments[0]?.count ?? 0
+              const work = c.assignments[0]?.count ?? 0
+              return (
+                <li key={c.id}>
+                  <Link to={`/teacher/classes/${c.id}`}>
+                    <strong>{c.name}</strong>
+                    <span className="muted small">
+                      {roster} student{roster === 1 ? '' : 's'} · {signedIn} signed in · {work} assignment{work === 1 ? '' : 's'}
+                    </span>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </aside>
       </div>
     </main>
   )
 }
 
-function LessonCard({
+function LessonRowItem({
   lesson,
   classes,
   onChange,
@@ -129,142 +159,93 @@ function LessonCard({
   onChange: () => void
   onError: (msg: string | null) => void
 }) {
-  const [classId, setClassId] = useState('')
-  const [due, setDue] = useState('')
-  const assigned = new Set(lesson.assignments.map((a) => a.class_id))
-  const open = classes.filter((c) => !assigned.has(c.id))
-  const nQuestions = lesson.questions[0]?.count ?? 0
-
+  const [assigning, setAssigning] = useState(false)
   const [busy, setBusy] = useState(false)
+  const assigned = new Set(lesson.assignments.map((a) => a.class_id))
+  const nQuestions = lesson.questions[0]?.count ?? 0
+  const className = classes.find((c) => c.id === lesson.class_id)?.name
 
-  /** Post to Google Classroom. The assignment already exists in Oasis, so a failure here is retryable. */
-  const postToClassroom = async (assignmentId: string) => {
-    const { data, error } = await invokeFn<{ ok: boolean; error?: string }>('classroom', { action: 'post', assignment_id: assignmentId })
-    if (error || !data?.ok) {
-      const why = data?.error === 'not_connected' || data?.error === 'reconnect' ? 'Connect Google Classroom first, then click Retry.' : (data?.error ?? error?.message ?? '')
-      onError(`Assigned in Oasis, but posting to Google Classroom failed. ${why}`)
-    }
-  }
-
-  const assign = async (e: FormEvent) => {
-    e.preventDefault()
-    if (due && new Date(due).getTime() < Date.now()) return onError('That due date has already passed. Pick a time in the future.')
+  const draft = async (assignmentId: string) => {
     onError(null)
     setBusy(true)
-    const { data, error } = await supabase
-      .from('assignments')
-      .insert({ lesson_id: lesson.id, class_id: classId, due_at: due ? new Date(due).toISOString() : null })
-      .select('id')
-      .single()
-    if (error) {
-      setBusy(false)
-      return onError(error.message)
-    }
-    await postToClassroom(data.id)
+    const r = await makeClassroomDraft(assignmentId)
     setBusy(false)
-    setClassId('')
-    setDue('')
+    if (!r.ok) onError(`Assigned in Oasis, but the Google Classroom draft wasn't made. ${r.message}`)
     onChange()
   }
-
-  const retry = async (assignmentId: string) => {
+  const check = async (assignmentId: string) => {
     onError(null)
     setBusy(true)
-    await postToClassroom(assignmentId)
+    const r = await checkClassroomPost(assignmentId)
     setBusy(false)
+    if (!r.ok) onError(`Couldn't check Google Classroom. ${r.message}`)
     onChange()
   }
 
   return (
-    <li className="card">
-      <div className="lesson-head">
-        <strong>{lesson.title}</strong>
-        <Link className="edit" to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
-      </div>
-      <div className="lesson-meta">
-        {lesson.subject && <span>{lesson.subject}</span>}
-        <span className={nQuestions === 0 ? 'error' : undefined}>{nQuestions} question{nQuestions === 1 ? '' : 's'}</span>
-      </div>
-      {lesson.assignments.length > 0 && (
-        <ul className="assigned small">
-          {lesson.assignments.map((a) => (
-            <li key={a.id} className="row">
-              <span>{classes.find((c) => c.id === a.class_id)?.name ?? 'A class'}</span>
-              {a.due_at && <span className="muted">due {new Date(a.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>}
-              {a.google_coursework_id ? (
-                <span className="ok">Posted to Classroom</span>
-              ) : (
-                <>
-                  <span className="error">Not in Classroom yet</span>
-                  <button className="small" onClick={() => retry(a.id)} disabled={busy}>Retry</button>
-                </>
-              )}
-              <Link to={`/teacher/assignments/${a.id}`}>Results</Link>
-            </li>
-          ))}
-        </ul>
-      )}
-      {open.length > 0 && (
-        <form className="row lesson-assign" onSubmit={assign}>
-          <select aria-label="Class" value={classId} onChange={(e) => setClassId(e.target.value)}>
-            <option value="">Assign to class…</option>
-            {open.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+    <li className="lesson-item">
+      <img className="lesson-thumb" src={`https://i.ytimg.com/vi/${lesson.youtube_id}/mqdefault.jpg`} alt="" loading="lazy" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
+      <div className="lesson-main">
+        <div className="lesson-head">
+          <Link to={`/teacher/lessons/${lesson.id}`} className="lesson-title">{lesson.title}</Link>
+        </div>
+        <div className="lesson-meta">
+          {className && <span>{className}</span>}
+          <span>{formatTime(Number(lesson.duration_s))}</span>
+          <span className={nQuestions === 0 ? 'error' : undefined}>{nQuestions} question{nQuestions === 1 ? '' : 's'}</span>
+        </div>
+        {lesson.assignments.length > 0 && (
+          <ul className="assigned small">
+            {lesson.assignments.map((a) => (
+              <li key={a.id} className="row">
+                <span>{classes.find((c) => c.id === a.class_id)?.name ?? 'A class'}</span>
+                {a.due_at && <span className="muted">due {new Date(a.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>}
+                <ClassroomBadge a={a} busy={busy} onDraft={() => void draft(a.id)} onCheck={() => void check(a.id)} />
+                <Link to={`/teacher/assignments/${a.id}`}>Results</Link>
+              </li>
             ))}
-          </select>
-          <label className="small">
-            Due <input type="datetime-local" className="text" value={due} min={localNow()} onChange={(e) => setDue(e.target.value)} />
-          </label>
-          <button disabled={busy || !classId || nQuestions === 0} title={nQuestions === 0 ? 'Add questions first' : undefined}>
-            {busy ? 'Posting…' : 'Assign + post to Classroom'}
-          </button>
-        </form>
+          </ul>
+        )}
+      </div>
+      <div className="lesson-actions">
+        <Link className="button" to={`/teacher/lessons/${lesson.id}`}>Edit</Link>
+        {classes.some((c) => !assigned.has(c.id)) && <button onClick={() => setAssigning(true)}>Assign…</button>}
+      </div>
+      {assigning && (
+        <AssignDialog
+          lesson={{ id: lesson.id, title: lesson.title, questionCount: nQuestions }}
+          classes={classes}
+          assignedClassIds={assigned}
+          initialClassId={lesson.class_id}
+          onClose={() => setAssigning(false)}
+          onAssigned={onChange}
+        />
       )}
     </li>
   )
 }
 
-/** Now as a datetime-local value ("2026-11-23T08:05") in the teacher's time zone. */
-function localNow(): string {
-  const d = new Date()
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  return d.toISOString().slice(0, 16)
-}
-
-
-type LibraryEntry = { id: string; title: string; subject: string }
-
-function LessonLibrary() {
-  const [shared, setShared] = useState<LibraryEntry[]>([])
-  const [starters, setStarters] = useState<LibraryEntry[]>([])
-  const [error, setError] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [filter, setFilter] = useState('')
-  useEffect(() => {
-    let active = true
-    Promise.all([
-      supabase.from('lessons').select('id,title,subject').eq('shared', true).order('title'),
-      supabase.from('starter_lessons').select('id,title,subject').order('title'),
-    ]).then(([library, catalog]) => {
-      if (!active) return
-      setShared(library.data ?? [])
-      setStarters(catalog.data ?? [])
-      setError(library.error || catalog.error ? 'Some library lessons could not be loaded.' : '')
-      setLoaded(true)
-    })
-    return () => { active = false }
-  }, [])
-  return <details className="card library">
-    <summary>Lesson library <span className="muted small">Starter lessons and ones other teachers shared</span></summary>
-    <label className="library-search">Search by title or subject <input className="text" value={filter} onChange={e => setFilter(e.target.value)} /></label>
-    {error && <p className="error" role="alert">{error}</p>}
-    {!loaded && <p className="muted">Loading lessons…</p>}
-    {([['Starter lessons', 'starter', starters], ['Shared by teachers', 'copy', shared]] as const).map(([heading, param, entries]) => {
-      const matches = entries.filter(e => (e.title + ' ' + e.subject).toLowerCase().includes(filter.trim().toLowerCase()))
-      return <section key={param}><h3>{heading}</h3>
-        {loaded && !error && !matches.length && <p className="muted small">No matching lessons.</p>}
-        <ul className="library-list">{matches.map(e => <li key={e.id}><Link to={'/teacher/lessons/new?' + param + '=' + e.id}>Use {e.title}</Link> · {e.subject}</li>)}</ul>
-      </section>
-    })}
-  </details>
+/** Where an assignment stands in Google Classroom, with the next step. */
+export function ClassroomBadge({ a, busy, onDraft, onCheck }: { a: AssignmentLink; busy: boolean; onDraft: () => void; onCheck: () => void }) {
+  const st = classroomStatus(a)
+  if (st === 'PUBLISHED') return <span className="ok">Posted in Classroom</span>
+  if (st === 'DRAFT')
+    return (
+      <>
+        <span className="tag warn">Draft in Classroom</span>
+        {a.google_coursework_url && (
+          <a href={a.google_coursework_url} target="_blank" rel="noreferrer">
+            Pick a topic and post
+          </a>
+        )}
+        <button className="small" onClick={onCheck} disabled={busy}>Check</button>
+      </>
+    )
+  if (st === 'DELETED') return <span className="error">Deleted in Classroom</span>
+  return (
+    <>
+      <span className="error">Not in Classroom yet</span>
+      <button className="small" onClick={onDraft} disabled={busy}>Make draft</button>
+    </>
+  )
 }

@@ -2,12 +2,12 @@
 // Secrets (supabase secrets set ...): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, APP_ORIGIN.
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { handleClassroom, type ClaimResult, type SyncResult } from '../_shared/classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type RecheckTarget, type SyncResult } from '../_shared/classroomHandler.ts'
 import { corsFor, parseOrigins } from '../_shared/cors.ts'
 
 const url = Deno.env.get('SUPABASE_URL')!
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!
-// Service role is used ONLY for the google_tokens table, claim_teacher_for and import_classroom_for (rosters must come from
+// Service role is used ONLY for the google_tokens table, claim_teacher_for, roster_recheck_target and import_classroom_for (rosters must come from
 // Google, so browsers can't call it). Everything else runs as the caller.
 const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
 const asCaller = (authHeader: string) =>
@@ -62,6 +62,9 @@ Deno.serve(async (req) => {
     async markUsed(userId) {
       must(await admin.from('google_tokens').update({ last_used_at: new Date().toISOString() }).eq('user_id', userId))
     },
+    async recheckTarget(studentId, assignmentId) {
+      return must(await admin.rpc('roster_recheck_target', { p_student: studentId, p_assignment: assignmentId })) as RecheckTarget
+    },
     async importClassroom(teacherId, courses) {
       return must(await admin.rpc('import_classroom_for', { p_teacher: teacherId, p_courses: courses })) as SyncResult
     },
@@ -69,12 +72,26 @@ Deno.serve(async (req) => {
       const row = must(
         await asCaller(authHeader)
           .from('assignments')
-          .select('id, due_at, google_coursework_id, lessons(title), classes(google_course_id, teacher_id)')
+          .select('id, due_at, instructions, google_coursework_id, lessons(title), classes(google_course_id, teacher_id)')
           .eq('id', id)
           .maybeSingle(),
-      ) as null | { id: string; due_at: string | null; google_coursework_id: string | null; lessons: { title: string }; classes: { google_course_id: string } }
+      ) as null | {
+        id: string
+        due_at: string | null
+        instructions: string
+        google_coursework_id: string | null
+        lessons: { title: string }
+        classes: { google_course_id: string }
+      }
       if (!row) return null
-      return { id: row.id, lessonTitle: row.lessons.title, courseId: row.classes.google_course_id, dueAt: row.due_at, courseworkId: row.google_coursework_id }
+      return {
+        id: row.id,
+        lessonTitle: row.lessons.title,
+        courseId: row.classes.google_course_id,
+        dueAt: row.due_at,
+        courseworkId: row.google_coursework_id,
+        instructions: row.instructions,
+      }
     },
     async getGradesToPush(authHeader, id) {
       // Scores aren't readable over REST (students would see their own); grades_to_push checks the caller teaches the class.
@@ -90,9 +107,18 @@ Deno.serve(async (req) => {
         grades: g.grades.map((x) => ({ email: x.email, score: Number(x.score), ungraded: Number(x.ungraded) })),
       }
     },
-    async setCourseworkId(authHeader, id, cwid) {
+    async setCourseworkId(authHeader, id, cwid, status) {
       // Only if still empty, so a late duplicate call can't overwrite the id Classroom students already have.
-      must(await asCaller(authHeader).from('assignments').update({ google_coursework_id: cwid }).eq('id', id).is('google_coursework_id', null))
+      must(
+        await asCaller(authHeader)
+          .from('assignments')
+          .update({ google_coursework_id: cwid, google_coursework_state: status.state, google_coursework_url: status.url })
+          .eq('id', id)
+          .is('google_coursework_id', null),
+      )
+    },
+    async setCourseworkStatus(authHeader, id, status) {
+      must(await asCaller(authHeader).from('assignments').update({ google_coursework_state: status.state, google_coursework_url: status.url }).eq('id', id))
     },
   })
   for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)

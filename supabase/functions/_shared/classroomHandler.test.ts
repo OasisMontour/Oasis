@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { handleClassroom, type ClaimResult, type Deps, type TeacherEvidence } from './classroomHandler.ts'
+import { handleClassroom, type ClaimResult, type Deps, type RecheckTarget, type TeacherEvidence } from './classroomHandler.ts'
 import { CLASSROOM_SCOPES } from './scopes.ts'
 import { decryptToken, encryptToken } from './tokenCrypto.ts'
 
@@ -19,9 +19,12 @@ function setup(
     existingCoursework?: { id: string; materials?: { link?: { url?: string } }[] }[]
     profileStatus?: number
     importFails?: boolean
+    draftFails?: boolean
+    recheck?: RecheckTarget
   } = {},
 ) {
   const claims: TeacherEvidence[] = []
+  const rechecks: { student: string; asgId: string }[] = []
   const revoked: string[] = []
   const store = new Map<string, string>()
   const calls: string[] = []
@@ -34,7 +37,16 @@ function setup(
     { email: 'bob@d.org', score: 70 },
     { email: 'ghost@d.org', score: 50 },
   ]
-  const asg = { id: 'as1', lessonTitle: 'Cells', courseId: 'gc1', dueAt: '2026-12-08T04:59:00.000Z', courseworkId: null as string | null }
+  const asg = {
+    id: 'as1',
+    lessonTitle: 'Cells',
+    courseId: 'gc1',
+    dueAt: '2026-12-08T04:59:00.000Z',
+    courseworkId: null as string | null,
+    instructions: '',
+    status: null as null | { state: string; url: string | null },
+  }
+  let cwState: string | null = 'PUBLISHED' // what Google says about cw1 when asked; null = 404
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     calls.push(url.split('?')[0])
@@ -49,9 +61,14 @@ function setup(
     }
     if ((init?.headers as Record<string, string>)?.Authorization !== 'Bearer acc') return new Response('', { status: 401 })
     if (url.includes('/courseWork') && init?.method === 'POST') {
-      posted.push({ url, body: JSON.parse(String(init.body)) })
-      return Response.json({ id: 'cw1' })
+      const body = JSON.parse(String(init.body))
+      posted.push({ url, body })
+      if (opts.draftFails) return Response.json({ error: { status: 'INVALID_ARGUMENT', message: 'nope' } }, { status: 400 })
+      return Response.json({ id: 'cw1', state: body.state })
     }
+    if (url === 'https://classroom.googleapis.com/v1/courses/gc1') return Response.json({ id: 'gc1', name: 'Bio', section: 'P2', alternateLink: 'https://classroom.google.com/c/R0Mx' })
+    if (url === 'https://classroom.googleapis.com/v1/courses/gc1/courseWork/cw1')
+      return cwState === null ? new Response('', { status: 404 }) : Response.json({ id: 'cw1', state: cwState, ...(cwState === 'PUBLISHED' ? { alternateLink: 'https://classroom.google.com/c/R0Mx/a/Y3cx/details' } : {}) })
     if (url.includes('/studentSubmissions') && init?.method === 'PATCH') {
       if ((opts.failGradeFor ?? []).some((id) => url.includes(`/studentSubmissions/${id}?`))) return Response.json({ error: { message: 'nope' } }, { status: 403 })
       patched.push({ url, body: JSON.parse(String(init.body)) })
@@ -71,7 +88,16 @@ function setup(
   const deps: Deps = {
     fetch: fakeFetch,
     env: { clientId: 'cid', clientSecret: 'sec', encKey: KEY, appOrigin: 'https://oasis.test/' },
-    getCaller: async (h) => (h === 'Bearer jwt' ? { id: 'teacher-1', email: 't@d.org', isTeacher: opts.teacher ?? true } : null),
+    getCaller: async (h) =>
+      h === 'Bearer jwt'
+        ? { id: 'teacher-1', email: 't@d.org', isTeacher: opts.teacher ?? true }
+        : h === 'Bearer kid'
+          ? { id: 'kid-1', email: 'Kid@d.org', isTeacher: false }
+          : null,
+    recheckTarget: async (student, asgId) => {
+      rechecks.push({ student, asgId })
+      return opts.recheck ?? { status: 'recheck', teacher_id: 'teacher-1', class_id: 'c1', course_id: 'gc1' }
+    },
     claimTeacher: async (_u, ev) => {
       claims.push(ev)
       return opts.claim ?? { status: 'granted', via: 'verified_teacher' }
@@ -88,13 +114,17 @@ function setup(
     },
     getAssignment: async (_h, id) => (id === asg.id ? { ...asg } : null),
     getGradesToPush: async (_h, id) => (id === asg.id ? { courseId: asg.courseId, courseworkId: asg.courseworkId, grades: [...grades] } : null),
-    setCourseworkId: async (_h, _id, cw) => void (asg.courseworkId = cw),
+    setCourseworkId: async (_h, _id, cw, st) => {
+      asg.courseworkId = cw
+      asg.status = st
+    },
+    setCourseworkStatus: async (_h, _id, st) => void (asg.status = st),
   }
   const call = async (body: unknown, auth = 'Bearer jwt') => {
     const res = await handleClassroom(new Request('http://x', { method: 'POST', headers: { Authorization: auth }, body: JSON.stringify(body) }), deps)
     return { status: res.status, body: await res.json() }
   }
-  return { claims, revoked, setRoster: (r: unknown[]) => void (roster = r), store, calls, imported, posted, patched, grades, asg, call }
+  return { rechecks, claims, revoked, setRoster: (r: unknown[]) => void (roster = r), setCwState: (v: string | null) => void (cwState = v), store, calls, imported, posted, patched, grades, asg, call }
 }
 
 describe('classroom edge function', () => {
@@ -220,23 +250,55 @@ describe('teacher sign-up (claim_teacher)', () => {
 })
 
 describe('auto-post to Classroom', () => {
-  it('posts the assignment with a link, due date in UTC and 100 points, then records the coursework id', async () => {
+  it('creates an unpublished draft with a link, due date in UTC and 100 points, then records the coursework id', async () => {
     const t = setup()
     await t.call({ action: 'connect', refresh_token: 'good-refresh' })
     const r = await t.call({ action: 'post', assignment_id: 'as1' })
-    expect(r.body).toEqual({ ok: true, coursework_id: 'cw1' })
+    expect(r.body).toEqual({ ok: true, coursework_id: 'cw1', state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
     expect(t.posted).toHaveLength(1)
     expect(t.posted[0].url).toBe('https://classroom.googleapis.com/v1/courses/gc1/courseWork')
     expect(t.posted[0].body).toMatchObject({
       title: 'Cells',
       workType: 'ASSIGNMENT',
-      state: 'PUBLISHED',
+      state: 'DRAFT',
       maxPoints: 100,
       materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }],
       dueDate: { year: 2026, month: 12, day: 8 },
       dueTime: { hours: 4, minutes: 59 },
     })
     expect(t.asg.courseworkId).toBe('cw1')
+    expect(t.asg.status).toEqual({ state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
+    expect(t.posted[0].body.description).toContain('https://oasis.test/student/assignments/as1')
+  })
+
+  it("puts the teacher's instructions in the draft", async () => {
+    const t = setup()
+    t.asg.instructions = 'Sub day: watch and answer. Due by Friday.'
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(t.posted[0].body.description).toMatch(/^Sub day: watch and answer\. Due by Friday\.\n\nOpen the lesson: https:\/\/oasis\.test\/student\/assignments\/as1$/)
+  })
+
+  it('never falls back to publishing when Google refuses the draft', async () => {
+    const t = setup({ draftFails: true })
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    const r = await t.call({ action: 'post', assignment_id: 'as1' })
+    expect(r.body).toMatchObject({ ok: false, google_status: 400 })
+    expect(t.posted.map((p) => p.body.state)).toEqual(['DRAFT'])
+    expect(t.asg.courseworkId).toBeNull()
+  })
+
+  it('post_status reports when the teacher has posted the draft in Classroom', async () => {
+    const t = setup()
+    await t.call({ action: 'connect', refresh_token: 'good-refresh' })
+    await t.call({ action: 'post', assignment_id: 'as1' })
+    t.setCwState('DRAFT')
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body).toEqual({ ok: true, state: 'DRAFT', url: 'https://classroom.google.com/c/R0Mx' })
+    t.setCwState('PUBLISHED')
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body).toEqual({ ok: true, state: 'PUBLISHED', url: 'https://classroom.google.com/c/R0Mx/a/Y3cx/details' })
+    expect(t.asg.status?.state).toBe('PUBLISHED')
+    t.setCwState(null)
+    expect((await t.call({ action: 'post_status', assignment_id: 'as1' })).body.state).toBe('DELETED')
   })
 
   it('never posts the same assignment twice', async () => {
@@ -311,6 +373,15 @@ describe('push grades', () => {
     expect(t.patched).toHaveLength(1)
   })
 
+  it('waits for the teacher to post the Classroom draft before sending grades', async () => {
+    const t = await ready()
+    t.setCwState('DRAFT')
+    const r = await t.call({ action: 'push_grades', assignment_id: 'as1' })
+    expect(r.body).toEqual({ ok: false, error: 'not_published', url: 'https://classroom.google.com/c/R0Mx' })
+    expect(t.patched).toHaveLength(0)
+    expect(t.asg.status?.state).toBe('DRAFT')
+  })
+
   it('needs the assignment posted, a connection, and ownership', async () => {
     const t = setup()
     expect((await t.call({ action: 'push_grades', assignment_id: 'as1' })).body).toEqual({ ok: false, error: 'not_posted' })
@@ -362,7 +433,7 @@ describe('token encryption', () => {
   it('reuses coursework a lost earlier response already created instead of posting twice', async () => {
     const t = setup({ existingCoursework: [{ id: 'cw-old', materials: [{ link: { url: 'https://oasis.test/student/assignments/as1' } }] }] })
     t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
-    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: true, coursework_id: 'cw-old' })
+    expect((await t.call({ action: 'post', assignment_id: 'as1' })).body).toEqual({ ok: true, coursework_id: 'cw-old', state: 'PUBLISHED', url: 'https://classroom.google.com/c/R0Mx' })
     expect(t.posted).toHaveLength(0)
     expect(t.asg.courseworkId).toBe('cw-old')
   })
@@ -373,5 +444,42 @@ describe('token encryption', () => {
     const r = await t.call({ action: 'connect', refresh_token: 'good-refresh' })
     expect(r.body).toMatchObject({ ok: true, students: 1, hidden_emails: 1 })
     expect((t.imported[0] as { hidden_emails: number }[])[0].hidden_emails).toBe(1)
+  })
+})
+
+describe('student roster recheck', () => {
+  const ASG = '4a000000-0000-0000-0000-000000000001'
+  const asKid = (t: ReturnType<typeof setup>, body: Record<string, unknown>) => t.call(body, 'Bearer kid')
+
+  it("re-reads only that class with the teacher's token and enrolls a student who's now on the roster", async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
+    const r = await asKid(t, { action: 'student_recheck', assignment_id: ASG })
+    expect(r.body).toEqual({ ok: true, enrolled: true })
+    expect(t.rechecks).toEqual([{ student: 'kid-1', asgId: ASG }])
+    expect(t.imported).toEqual([[{ id: 'gc1', name: 'Bio', section: 'P2', students: [{ email: 'kid@d.org', name: 'Kid' }], hidden_emails: 0 }]])
+  })
+
+  it('says not enrolled when the student still is not on the roster', async () => {
+    const t = setup()
+    t.store.set('teacher-1', await encryptToken('good-refresh', KEY, 'teacher-1'))
+    t.setRoster([{ profile: { emailAddress: 'someone@d.org' } }])
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false })
+  })
+
+  it('does nothing when rate-limited, unknown, or the teacher is not connected', async () => {
+    for (const status of ['limited', 'not_found'] as const) {
+      const t = setup({ recheck: { status } })
+      expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false, reason: status })
+      expect(t.imported).toEqual([])
+    }
+    const t = setup()
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: ASG })).body).toEqual({ ok: true, enrolled: false, reason: 'teacher_not_connected' })
+  })
+
+  it('students still cannot sync, post or push grades, and need a real assignment id', async () => {
+    const t = setup()
+    for (const action of ['sync', 'post', 'push_grades', 'disconnect']) expect((await asKid(t, { action, assignment_id: ASG })).status).toBe(403)
+    expect((await asKid(t, { action: 'student_recheck', assignment_id: '../x' })).status).toBe(400)
   })
 })

@@ -1,5 +1,6 @@
+import { invokeFn } from './invokeFn'
 import { supabase } from './supabase'
-import type { PlayerQuestion, StudentAssignmentRow, StudentLesson } from './player'
+import type { AnswerResult, PlayerQuestion, StudentAssignmentRow, StudentLesson } from './player'
 
 // Thin wrappers over the student RPCs (supabase/migrations/20261112000000_init.sql and later).
 // Every write goes through an RPC; RLS only lets students read their own rows.
@@ -8,7 +9,7 @@ export async function listMyAssignments(): Promise<{ rows: StudentAssignmentRow[
   const [a, e] = await Promise.all([
     supabase
       .from('assignments')
-      .select('id, due_at, created_at, lessons(title, duration_s, youtube_id), classes(name), attempts(max_watched_s, finished_at)')
+      .select('id, class_id, due_at, created_at, lessons(title, duration_s, youtube_id), classes(name), attempts(max_watched_s, finished_at)')
       .order('created_at', { ascending: false }),
     supabase.from('enrollments').select('class_id', { count: 'exact', head: true }),
   ])
@@ -27,6 +28,7 @@ export async function getStudentLesson(assignmentId: string): Promise<StudentLes
     max_watched_s: Number(l.max_watched_s),
     last_pos_s: Number(l.last_pos_s),
     questions: (l.questions ?? []).map((q) => ({ ...q, at_s: Number(q.at_s) })),
+    notes: (l.notes ?? []).map((n) => ({ ...n, at_s: Number(n.at_s) })),
   }
 }
 
@@ -49,9 +51,12 @@ export async function saveProgress(attemptId: string, maxWatched: number, lastPo
   if (error) throw error
 }
 
-export async function submitAnswer(attemptId: string, questionId: string, response: string): Promise<void> {
-  const { error } = await supabase.rpc('submit_answer', { p_attempt: attemptId, p_question: questionId, p_response: response })
+/** Locks in an answer. The server says whether it was right only for choice questions in lessons that show it. */
+export async function submitAnswer(attemptId: string, questionId: string, response: string): Promise<AnswerResult> {
+  const { data, error } = await supabase.rpc('submit_answer', { p_attempt: attemptId, p_question: questionId, p_response: response })
   if (error) throw error
+  const r = (data as { result?: string } | null)?.result
+  return r === 'correct' || r === 'incorrect' ? r : 'submitted'
 }
 
 export async function finishAttempt(attemptId: string): Promise<void> {
@@ -65,4 +70,25 @@ export type FocusKind = 'exit_fullscreen' | 'tab_hidden' | 'blur' | 'no_fullscre
 export async function sendFocusEvent(attemptId: string, kind: FocusKind, videoS: number): Promise<void> {
   const { error } = await supabase.rpc('log_focus_event', { p_attempt: attemptId, p_kind: kind, p_video_s: Math.max(0, Math.round(videoS * 10) / 10) })
   if (error) throw error
+}
+
+/**
+ * The student opened an assignment for a class Oasis doesn't have them in yet (added in Google Classroom after the
+ * teacher's last sync). Asks the server to re-read that class's roster once. True if they're in it now.
+ */
+export async function recheckEnrollment(assignmentId: string): Promise<boolean> {
+  const { data } = await invokeFn<{ ok: boolean; enrolled?: boolean }>('classroom', { action: 'student_recheck', assignment_id: assignmentId })
+  return data?.ok === true && data.enrolled === true
+}
+
+export type MyClass = { id: string; name: string }
+
+/** The classes this student is enrolled in (from their teachers' Google Classroom rosters). */
+export async function listMyClasses(): Promise<MyClass[]> {
+  const { data, error } = await supabase.from('enrollments').select('classes(id, name)')
+  if (error) throw error
+  return ((data ?? []) as unknown as { classes: MyClass | null }[])
+    .map((e) => e.classes)
+    .filter((c): c is MyClass => !!c)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

@@ -112,3 +112,40 @@
 .s-list > li + li .s-row { border-top: 1px solid var(--s-line); }
 .s-list .s-row { border: 0; border-radius: 0; background: none; }
 .s-list .s-row:hover { background: #fbf8f0; }
+
+/* multi-select, answer feedback, teacher notes (beta items 7, 8, 11) */
+fieldset.p-choices { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.p-choices .p-ans b { border-radius: 4px; }
+.p-result { margin: 4px 0; padding: 12px 14px; border-radius: 8px; font-weight: 700; font-size: 1.125rem; border: 2px solid var(--s-line); }
+.p-result.correct { background: #e2f1e6; border-color: #9fd3ae; color: #1a6b3c; }
+.p-result.incorrect { background: #fbe5e2; border-color: #eab3ad; color: #b3261e; }
+.p-result.submitted { background: var(--s-paper); }
+.p-note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- student nav + settings (beta item 3) */
+.s-nav { display: flex; gap: 4px; margin-right: auto; }
+.s-nav a { padding: 8px 12px; border-radius: 8px; text-decoration: none; color: var(--s-muted); font-weight: 700; min-height: 40px; display: inline-flex; align-items: center; }
+.s-nav a:hover { color: var(--s-ink); background: #efe9dc; }
+.s-nav a.active { color: #0a5754; background: var(--s-water-soft); }
+.s-nav a:focus-visible { outline: 3px solid var(--s-mint); outline-offset: 2px; }
+.s-top .brand { margin-right: 8px; }
+@media (max-width: 560px) { .s-top { flex-wrap: wrap; } .s-nav { order: 3; width: 100%; } }
+.s-card { background: #fffdf8; border: 1px solid var(--s-line); border-radius: 8px; padding: 16px 18px; margin-top: 16px; display: grid; gap: 10px; }
+.s-card h2 { margin: 0; }
+.s-field { border: 0; padding: 0; margin: 0; display: flex; gap: 16px; flex-wrap: wrap; }
+.s-field legend { font-weight: 700; margin-bottom: 6px; }
+.s-choice { display: flex; gap: 10px; align-items: center; min-height: 40px; cursor: pointer; }
+.s-choice input { width: 20px; height: 20px; accent-color: var(--s-water); }
+.s-crumbs { margin: 0 0 4px; }
+.s-class { justify-content: space-between; }
+
+/* Text size, contrast and motion, from Settings (lib/studentPrefs.ts). */
+:root[data-text='large'] { font-size: 19.5px; }
+:root[data-text='larger'] { font-size: 22px; }
+:root[data-contrast='high'] {
+  --s-muted: #27302d; --s-line: #5b5345; --muted: #27302d; --line: #5b5345; --line-2: #3f392f;
+}
+:root[data-contrast='high'] .s-row, :root[data-contrast='high'] .p-ans { border-width: 2px; }
+:root[data-motion='reduce'] *, :root[data-motion='reduce'] *::before, :root[data-motion='reduce'] *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}

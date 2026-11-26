@@ -5,10 +5,12 @@ export type StudentStatus = 'not_signed_in' | 'not_started' | 'in_progress' | 'f
 export type ResultQuestion = {
   id: string
   at_s: number
-  kind: 'mc' | 'short'
+  kind: 'mc' | 'multi' | 'short'
   prompt: string
   choices: string[] | null
   correct_index: number | null
+  /** Multi-select only: every right choice. The student must pick exactly these. */
+  correct_indexes?: number[] | null
   /** Short answers: what the teacher expects (used by AI grading). Never sent to students. */
   rubric?: string
 }
@@ -69,6 +71,17 @@ export function displayName(s: Pick<ResultStudent, 'name' | 'email'>): string {
 export function mcChoice(response: string | undefined): number | null {
   if (response === undefined || !/^\d+$/.test(response.trim())) return null
   return Number(response.trim())
+}
+
+/** "0,2" -> [0, 2] for multi-select answers. Anything malformed -> []. */
+export function multiChoices(response: string | undefined): number[] {
+  if (!response || !/^\d+(,\d+)*$/.test(response.trim())) return []
+  return response.trim().split(',').map(Number)
+}
+
+/** "A, C" for a set of choice indexes. */
+export function choiceLetters(set: number[]): string {
+  return set.length ? set.map(choiceLetter).join(', ') : 'nothing'
 }
 
 /** "A", "B", ... for choice index 0, 1, ... */
@@ -138,6 +151,14 @@ export function summarize(students: ResultStudent[], questions: ResultQuestion[]
   return s
 }
 
+/**
+ * The two things a teacher opens results for (beta item 12): how many are done, and what still needs them.
+ * `done` counts finished students; `pct` is out of everyone on the roster.
+ */
+export function completion(s: Summary): { done: number; total: number; pct: number } {
+  return { done: s.finished, total: s.total, pct: s.total ? Math.round((100 * s.finished) / s.total) : 0 }
+}
+
 export type QuestionStats = {
   question: ResultQuestion
   answered: number
@@ -147,7 +168,7 @@ export type QuestionStats = {
   /** correct / graded as 0..100, or null if nothing is graded yet. */
   pctCorrect: number | null
   ungraded: number
-  /** MC only: how many students picked each choice (same order as question.choices). */
+  /** Choice questions: how many students picked each choice (same order as question.choices). */
   choiceCounts: number[]
 }
 
@@ -168,6 +189,8 @@ export function questionStats(questions: ResultQuestion[], students: ResultStude
       if (q.kind === 'mc') {
         const c = mcChoice(a.response)
         if (c !== null && c < choiceCounts.length) choiceCounts[c]++
+      } else if (q.kind === 'multi') {
+        for (const c of multiChoices(a.response)) if (c < choiceCounts.length) choiceCounts[c]++
       }
     }
     return { question: q, answered, graded, correct, pctCorrect: graded ? (100 * correct) / graded : null, ungraded: answered - graded, choiceCounts }
@@ -212,6 +235,9 @@ function answerCell(q: ResultQuestion, a: ResultAnswer | undefined): string {
   if (q.kind === 'mc') {
     const c = mcChoice(a.response)
     text = c !== null ? `${choiceLetter(c)}. ${q.choices?.[c] ?? ''}`.trim() : a.response
+  } else if (q.kind === 'multi') {
+    const set = multiChoices(a.response)
+    text = set.length ? set.map((c) => `${choiceLetter(c)}. ${q.choices?.[c] ?? ''}`.trim()).join('; ') : a.response
   }
   const mark = a.is_correct === null ? 'needs grading' : a.is_correct ? 'correct' : 'incorrect'
   const by = a.graded_by === 'ai' ? ', by AI' : ''

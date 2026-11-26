@@ -2,38 +2,52 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/bulkPaste'
-import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
-import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
+import { parseEdpuzzlePaste } from '../lib/edpuzzleImport'
+import { readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
-import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
+import { blankQuestion, removeChoice, switchKind, videoProblem, type DraftNote } from '../lib/builder'
+import { AiDraftPanel } from '../components/AiDraftPanel'
+import { AssignDialog, type AssignClass } from '../components/AssignDialog'
+import { useAuth } from '../auth/AuthProvider'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
 type Draft = DraftQuestion & { key: string; timeText: string }
 
 let keySeq = 0
-const toDraft = (q: DraftQuestion): Draft => ({ ...q, key: `q${++keySeq}`, timeText: formatTime(q.at_s) })
+const toDraft = (q: DraftQuestion): Draft => ({ ...q, correct_indexes: q.correct_indexes ?? [], key: `q${++keySeq}`, timeText: formatTime(q.at_s) })
+const toNote = (at_s: number, body = ''): DraftNote => ({ key: `n${++keySeq}`, at_s, timeText: formatTime(at_s), body })
 
 export function LessonBuilder() {
   const { id } = useParams()
   const navigate = useNavigate()
   const isNew = !id
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { profile } = useAuth()
 
   const [videoInput, setVideoInput] = useState('')
   const [youtubeId, setYoutubeId] = useState<string | null>(null)
   const [duration, setDuration] = useState<number | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
+  // Free-text subject is gone from the form (beta item 5); it's kept as loaded for the planned shared library.
   const [subject, setSubject] = useState('')
+  // The class this lesson is for: only classes this teacher teaches. Carried into assignment.
+  const [classId, setClassId] = useState<string>(isNew ? (searchParams.get('class') ?? '') : '')
+  const [myClasses, setMyClasses] = useState<AssignClass[] | null>(null)
+  const [assignedTo, setAssignedTo] = useState<ReadonlySet<string>>(new Set())
+  const [assignOpen, setAssignOpen] = useState(false)
+  // No share checkbox for the beta (item 2): new lessons are private, and a lesson that was already shared keeps
+  // its setting on save. Changing existing sharing is a separate decision.
   const [shared, setShared] = useState(false)
   const copyId = isNew ? searchParams.get('copy') : null
-  const starterId = isNew ? searchParams.get('starter') : null
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
+  const [showFeedback, setShowFeedback] = useState(true)
+  const [notes, setNotes] = useState<DraftNote[]>([])
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
-  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle'>('manual')
-  const [loading, setLoading] = useState(Boolean(id || copyId || starterId))
+  const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle' | 'ai'>('manual')
+  const [loading, setLoading] = useState(Boolean(id || copyId))
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -50,24 +64,11 @@ export function LessonBuilder() {
 
   // ---- load an existing lesson
   useEffect(() => {
-    if (!id && !copyId && !starterId) return
+    if (!id && !copyId) return
     let active = true
     ;(async () => {
-      if (starterId) {
-        const { data, error } = await supabase.from('starter_lessons').select('*').eq('id', starterId).single()
-        if (!active) return
-        setLoading(false)
-        if (error || !data) return setStatus({ kind: 'error', text: 'Could not load this starter lesson.' })
-        setTitle(data.title)
-        setSubject(data.subject)
-        setVideoInput('https://youtu.be/' + data.youtube_id)
-        setYoutubeId(data.youtube_id)
-        setQuestions((data.questions as DraftQuestion[]).map(toDraft))
-        setDirty(true)
-        return
-      }
       let query = supabase.from('lessons')
-        .select('id, shared, title, subject, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric)')
+        .select('id, shared, title, subject, class_id, show_feedback, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, correct_indexes, position, rubric), lesson_notes(id, at_s, body, position), assignments(class_id)')
         .eq('id', copyId || id)
       if (copyId) query = query.eq('shared', true)
       const { data, error } = await query.single()
@@ -81,18 +82,51 @@ export function LessonBuilder() {
       setDirty(Boolean(copyId))
       setTitle(data.title)
       setSubject(data.subject)
+      if (!copyId) {
+        setClassId(data.class_id ?? '')
+        setAssignedTo(new Set((data.assignments ?? []).map((a: { class_id: string }) => a.class_id)))
+      }
       setVideoInput(`https://youtu.be/${data.youtube_id}`)
       setYoutubeId(data.youtube_id)
       setDuration(Number(data.duration_s))
       setFullscreen(data.require_fullscreen)
       setAiGrade(data.ai_grade_short)
+      setShowFeedback(data.show_feedback ?? true)
+      setNotes(
+        [...((data.lesson_notes ?? []) as { at_s: number; body: string; position: number }[])]
+          .sort((a, b) => Number(a.at_s) - Number(b.at_s) || a.position - b.position)
+          .map((n) => toNote(Number(n.at_s), n.body)),
+      )
       const qs = [...(data.questions as (DraftQuestion & { id: string; position: number })[])].sort(
         (a, b) => a.at_s - b.at_s || a.position - b.position,
       )
-      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [], correct_indexes: q.correct_indexes ?? [] })))
     })()
     return () => { active = false }
-  }, [id, copyId, starterId])
+  }, [id, copyId])
+
+  // ---- the teacher's own classes, for the Class dropdown and assignment
+  useEffect(() => {
+    if (!profile) return
+    let active = true
+    supabase
+      .from('classes')
+      .select('id, name')
+      .eq('teacher_id', profile.id)
+      .order('name')
+      .then(({ data }) => active && setMyClasses((data as AssignClass[] | null) ?? []))
+    return () => {
+      active = false
+    }
+  }, [profile])
+
+  // Straight after a new lesson's first save: open assignment setup with its class picked (beta item 9).
+  useEffect(() => {
+    if (!isNew && searchParams.get('assign') === '1') {
+      setAssignOpen(true)
+      setSearchParams({}, { replace: true })
+    }
+  }, [isNew, searchParams, setSearchParams])
 
   // ---- warn before leaving with unsaved edits
   useEffect(() => {
@@ -168,7 +202,7 @@ export function LessonBuilder() {
 
   const now = () => Math.floor(player.current?.getCurrentTime() ?? 0)
 
-  const addQuestion = (kind: 'mc' | 'short') => {
+  const addQuestion = (kind: DraftQuestion['kind']) => {
     player.current?.pauseVideo()
     const q = toDraft(blankQuestion(kind, now()))
     setQuestions((qs) => [...qs, q].sort((a, b) => a.at_s - b.at_s))
@@ -187,6 +221,22 @@ export function LessonBuilder() {
 
   const sortByTime = () => setQuestions((qs) => [...qs].sort((a, b) => a.at_s - b.at_s))
 
+  // ---- notes (beta item 8): text the player pauses on. Never graded.
+  const addNote = () => {
+    player.current?.pauseVideo()
+    setNotes((ns) => [...ns, toNote(now())].sort((a, b) => a.at_s - b.at_s))
+    touch()
+  }
+  const updateNote = (key: string, patch: Partial<DraftNote>) => {
+    setNotes((ns) => ns.map((n) => (n.key === key ? { ...n, ...patch } : n)))
+    touch()
+  }
+  const removeNote = (key: string) => {
+    setNotes((ns) => ns.filter((n) => n.key !== key))
+    touch()
+  }
+  const sortNotes = () => setNotes((ns) => [...ns].sort((a, b) => a.at_s - b.at_s))
+
   // ---- bulk paste
   const [bulkText, setBulkText] = useState('')
   const [bulkErrors, setBulkErrors] = useState<string[]>([])
@@ -200,37 +250,11 @@ export function LessonBuilder() {
     touch()
   }
 
-  // ---- Edpuzzle import: the teacher copies their own lesson's questions and pastes them here.
-  // Nothing is fetched from Edpuzzle. Imported questions are plain drafts and save through
-  // save_lesson like any other, so they get the same ownership checks and question locking.
-  const [importText, setImportText] = useState('')
+  // ---- Edpuzzle bookmarklet arrivals. The import panel is gone from the builder (beta item 2), but teachers who
+  // already dragged "Send to Oasis" to their bookmarks bar still land here with questions in the #fragment
+  // (never sent to a server). It's untrusted, so it only pre-fills drafts; nothing is saved until Save.
+  // Retiring the importer itself is Wyatt's call, so the parser stays.
   const [importNote, setImportNote] = useState<{ added: number; needAnswer: number; warnings: string[] } | null>(null)
-  const [fromBookmarklet, setFromBookmarklet] = useState(false)
-  const addImport = (text = importText, ytOverride: string | null = null) => {
-    const r = parseEdpuzzlePaste(text)
-    if (ytOverride) r.youtubeId = ytOverride
-    // Pasting the same questions twice (easy to do) shouldn't double them up.
-    const have = new Set(questions.map((q) => `${q.at_s}|${q.prompt.trim()}`))
-    const fresh = r.questions.filter((q) => !have.has(`${q.at_s}|${q.prompt.trim()}`))
-    const dupes = r.questions.length - fresh.length
-    const warnings = dupes ? [...r.warnings, `Skipped ${dupes} question${dupes === 1 ? '' : 's'} already in this lesson.`] : r.warnings
-    const needAnswer = fresh.filter((q) => q.kind === 'mc' && q.correct_index === null).length
-    setImportNote({ added: fresh.length, needAnswer, warnings })
-    if (r.youtubeId && !youtubeId) {
-      setVideoInput(`https://youtu.be/${r.youtubeId}`)
-      setVideoError(null)
-      setDuration(null)
-      setYoutubeId(r.youtubeId)
-    }
-    if (!fresh.length) return
-    setQuestions((qs) => [...qs, ...fresh.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
-    setImportText('')
-    setSource('edpuzzle')
-    touch()
-  }
-
-  // Arriving from the "Send to Oasis" bookmarklet: the data is in the #fragment (never sent to a
-  // server). It's untrusted, so it only pre-fills drafts; nothing is saved until the teacher clicks Save.
   const bookmarkletDone = useRef(false)
   useEffect(() => {
     if (!isNew || bookmarkletDone.current) return
@@ -238,16 +262,18 @@ export function LessonBuilder() {
     if (!p) return
     bookmarkletDone.current = true
     window.history.replaceState(null, '', window.location.pathname + window.location.search)
-    setFromBookmarklet(true)
-    addImport(p.text, p.yt)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const r = parseEdpuzzlePaste(p.text)
+    if (p.yt) r.youtubeId = p.yt
+    setImportNote({ added: r.questions.length, needAnswer: r.questions.filter((q) => q.kind === 'mc' && q.correct_index === null).length, warnings: r.warnings })
+    if (r.youtubeId) {
+      setVideoInput(`https://youtu.be/${r.youtubeId}`)
+      setYoutubeId(r.youtubeId)
+    }
+    if (!r.questions.length) return
+    setQuestions(r.questions.map(toDraft).sort((a, b) => a.at_s - b.at_s))
+    setSource('edpuzzle')
+    touch()
   }, [isNew])
-
-  // React refuses javascript: URLs in JSX, so the bookmarklet link's href is set directly.
-  const bookmarkletRef = useRef<HTMLAnchorElement>(null)
-  useEffect(() => {
-    bookmarkletRef.current?.setAttribute('href', bookmarkletHref(window.location.origin))
-  })
 
   // ---- save
   const problems = (): string[] => {
@@ -260,8 +286,15 @@ export function LessonBuilder() {
       if (parseTime(q.timeText) === null) out.push(`${n}: the time should look like 1:30.`)
       else if (duration && q.at_s > duration) out.push(`${n}: ${formatTime(q.at_s)} is past the end of the video (${formatTime(duration)}).`)
       if (!q.prompt.trim()) out.push(`${n}: write the question.`)
-      if (q.kind === 'mc' && q.choices.some((c) => !c.trim())) out.push(`${n}: fill in every choice or remove the empty ones.`)
+      if (q.kind !== 'short' && q.choices.some((c) => !c.trim())) out.push(`${n}: fill in every choice or remove the empty ones.`)
       if (q.kind === 'mc' && q.correct_index === null) out.push(`${n}: pick the right answer with the circle.`)
+      if (q.kind === 'multi' && !(q.correct_indexes ?? []).length) out.push(`${n}: tick every right answer.`)
+    })
+    notes.forEach((nt, i) => {
+      const n = `Note ${i + 1}`
+      if (parseTime(nt.timeText) === null) out.push(`${n}: the time should look like 1:30.`)
+      else if (duration && nt.at_s > duration) out.push(`${n}: ${formatTime(nt.at_s)} is past the end of the video.`)
+      if (!nt.body.trim()) out.push(`${n}: write the note or delete it.`)
     })
     return out
   }
@@ -276,12 +309,15 @@ export function LessonBuilder() {
         id: id ?? null,
         title: title.trim(),
         subject: subject.trim(),
+        class_id: classId || null,
         shared,
         youtube_id: youtubeId,
         duration_s: duration,
         require_fullscreen: fullscreen,
         ai_grade_short: aiGrade,
+        show_feedback: showFeedback,
         source,
+        notes: [...notes].sort((a, b) => a.at_s - b.at_s).map((n) => ({ at_s: n.at_s, body: n.body.trim() })),
       },
       p_questions: [...questions]
         .sort((a, b) => a.at_s - b.at_s)
@@ -290,8 +326,9 @@ export function LessonBuilder() {
           at_s: q.at_s,
           kind: q.kind,
           prompt: q.prompt.trim(),
-          choices: q.kind === 'mc' ? q.choices.map((c) => c.trim()) : null,
+          choices: q.kind !== 'short' ? q.choices.map((c) => c.trim()) : null,
           correct_index: q.kind === 'mc' ? q.correct_index : null,
+          correct_indexes: q.kind === 'multi' ? q.correct_indexes : null,
           rubric: q.kind === 'short' ? (q.rubric ?? '').trim() : '',
         })),
     })
@@ -302,7 +339,7 @@ export function LessonBuilder() {
     if (isNew) {
       setSaving(false)
       setDirty(false)
-      navigate(`/teacher/lessons/${data}`, { replace: true })
+      navigate(`/teacher/lessons/${data}?assign=1`, { replace: true })
       return setStatus({ kind: 'ok', text: 'Saved.' })
     }
     // Reload so new questions pick up their ids. One retry: a missed read here means the next save
@@ -310,7 +347,7 @@ export function LessonBuilder() {
     const readIds = () =>
       supabase
         .from('questions')
-        .select('id, at_s, kind, prompt, choices, correct_index, rubric')
+        .select('id, at_s, kind, prompt, choices, correct_index, correct_indexes, rubric')
         .eq('lesson_id', id)
         .order('at_s')
         .order('position')
@@ -326,54 +363,10 @@ export function LessonBuilder() {
       // and leave the lesson marked unsaved rather than overwrite them with the server copy.
       return setStatus({ kind: 'error', text: 'Saved, but you changed something while it was saving. Save again to keep those changes.' })
     }
-    setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+    setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [], correct_indexes: q.correct_indexes ?? [] })))
     setDirty(false)
     setStatus({ kind: 'ok', text: 'Saved.' })
   }
-
-  // Shown first when the teacher came here to import, otherwise tucked under the questions.
-  const fromEdpuzzle = searchParams.get('from') === 'edpuzzle'
-  const importPanel = (
-    <details className="card" open={fromEdpuzzle || undefined}>
-      <summary>Bring over an Edpuzzle lesson</summary>
-      <div className="stack small">
-        <p>
-          <strong>Fastest:</strong> drag this button to your bookmarks bar:{' '}
-          {/* href is set in an effect; clicking it here does nothing */}
-          <a ref={bookmarkletRef} className="button" onClick={(e) => e.preventDefault()} title="Drag me to your bookmarks bar">
-            Send to Oasis
-          </a>
-        </p>
-        <p className="muted">
-          Then open your lesson's questions in Edpuzzle and click the bookmark. It reads only the page you're looking at
-          (nothing is sent to Edpuzzle and Oasis never sees your Edpuzzle login) and brings the questions here for you to
-          check. If Edpuzzle changes their site or your school blocks bookmarklets, copy and paste instead:
-        </p>
-      </div>
-      <ol className="muted small">
-        <li>Open the lesson in Edpuzzle and click into the video's questions.</li>
-        <li>Select the questions (or the whole page) and copy.</li>
-        <li>Paste below. Times, questions and choices come over; anything else is ignored.</li>
-      </ol>
-      <p className="muted small">
-        Edpuzzle doesn't copy which answer is right unless you add a * or ✓ next to it, so you'll pick those here. Video
-        crops, notes, voiceovers and uploaded (non-YouTube) videos don't come over.
-      </p>
-      <textarea aria-label="Edpuzzle questions" rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={EDPUZZLE_IMPORT_EXAMPLE} />
-      <button onClick={() => addImport()} disabled={!importText.trim()}>Import questions</button>
-      {importNote && (
-        <div role="status" className="stack small">
-          {fromBookmarklet && <p className="muted">Brought over from your Edpuzzle page. Check every question before you save.</p>}
-          <p className={importNote.added ? 'ok' : 'error'}>
-            {importNote.added ? `Added ${importNote.added} question${importNote.added === 1 ? '' : 's'}.` : importNote.warnings.some((w) => w.startsWith('Skipped')) ? 'Nothing new to add.' : 'No questions found.'}
-            {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
-            {importNote.added > 0 && !youtubeId && ' Now paste the YouTube link at the top.'}
-          </p>
-          {importNote.warnings.length > 0 && <ul className="muted">{importNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
-        </div>
-      )}
-    </details>
-  )
 
   if (loading) return <p className="muted center">Loading…</p>
   if (loadFailed)
@@ -403,16 +396,41 @@ export function LessonBuilder() {
           ← Back
         </Link>
         <strong>{isNew ? 'New lesson' : 'Edit lesson'}</strong>
+        {!isNew && !needsReload && (
+          <button onClick={() => setAssignOpen(true)} disabled={saving || dirty} title={dirty ? 'Save your changes first' : undefined}>
+            Assign…
+          </button>
+        )}
         {needsReload
           ? <button className="primary" onClick={() => window.location.reload()}>Reload</button>
-          : <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>}
+          : <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : isNew ? 'Save and assign' : 'Save'}</button>}
       </header>
+      {assignOpen && id && myClasses && (
+        <AssignDialog
+          lesson={{ id, title: title.trim() || 'Untitled lesson', questionCount: questions.length }}
+          classes={myClasses}
+          assignedClassIds={assignedTo}
+          initialClassId={classId || null}
+          onClose={() => setAssignOpen(false)}
+          onAssigned={() =>
+            supabase.from('assignments').select('class_id').eq('lesson_id', id).then(({ data }) => data && setAssignedTo(new Set(data.map((a) => a.class_id))))
+          }
+        />
+      )}
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
 
       {/* Locked while saving: edits made mid-save were silently replaced by the server copy (audit #8). */}
       <fieldset className="plain" disabled={saving || needsReload}>
 
-      {fromEdpuzzle && <section>{importPanel}</section>}
+      {importNote && (
+        <div role="status" className="card stack small">
+          <p className={importNote.added ? 'ok' : 'error'}>
+            {importNote.added ? `Brought over ${importNote.added} question${importNote.added === 1 ? '' : 's'} from your Edpuzzle page. Check every question before you save.` : 'No questions found on that Edpuzzle page.'}
+            {importNote.needAnswer > 0 && ` ${importNote.needAnswer} need you to pick the right answer (marked in red).`}
+          </p>
+          {importNote.warnings.length > 0 && <ul className="muted">{importNote.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+        </div>
+      )}
 
       <div className="builder-grid">
       <section className="stack builder-media">
@@ -433,8 +451,14 @@ export function LessonBuilder() {
             <input className="text" value={title} maxLength={200} onChange={(e) => { setTitle(e.target.value); touch() }} />
           </label>
           <label>
-            Subject
-            <input className="text" value={subject} onChange={(e) => { setSubject(e.target.value); touch() }} placeholder="Biology" />
+            Class
+            <select value={classId} onChange={(e) => { setClassId(e.target.value); touch() }} disabled={myClasses === null}>
+              <option value="">{myClasses?.length === 0 ? 'No classes yet (connect Google Classroom)' : 'Choose a class…'}</option>
+              {(myClasses ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+              {classId && myClasses && !myClasses.some((c) => c.id === classId) && <option value={classId}>A class you no longer teach</option>}
+            </select>
           </label>
           <label className="check">
             <input type="checkbox" checked={fullscreen} onChange={(e) => { setFullscreen(e.target.checked); touch() }} />
@@ -445,8 +469,8 @@ export function LessonBuilder() {
             Suggest grades for short answers with AI (you can always change them)
           </label>
           <label className="check">
-            <input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); touch() }} />
-            Share this lesson and its questions with other Oasis teachers
+            <input type="checkbox" checked={showFeedback} onChange={(e) => { setShowFeedback(e.target.checked); touch() }} />
+            Tell students right away if a choice answer was right (turn off for a quiz: classmates could share answers)
           </label>
         </div>
       </section>
@@ -456,10 +480,22 @@ export function LessonBuilder() {
           <h2>Questions <span className="count">{questions.length}</span></h2>
           <span className="row">
             <button onClick={() => addQuestion('mc')} disabled={!duration}>+ Multiple choice here</button>
+            <button onClick={() => addQuestion('multi')} disabled={!duration}>+ Multi-select here</button>
             <button onClick={() => addQuestion('short')} disabled={!duration}>+ Short answer here</button>
+            <button onClick={addNote} disabled={!duration}>+ Note here</button>
           </span>
         </div>
         <p className="muted small">Pause the video where you want a question, then add it. Students can't skip past a question until they answer it.</p>
+
+        <AiDraftPanel
+          durationS={duration}
+          open={searchParams.get('ai') === '1'}
+          onDrafts={(qs) => {
+            setQuestions((cur) => [...cur, ...qs.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
+            setSource((s) => (s === 'manual' ? 'ai' : s))
+            touch()
+          }}
+        />
 
         <ol className="cards">
           {questions.map((q, i) => (
@@ -484,11 +520,12 @@ export function LessonBuilder() {
                   aria-label="Question type"
                   value={q.kind}
                   onChange={(e) => {
-                    const kind = e.target.value as 'mc' | 'short'
+                    const kind = e.target.value as DraftQuestion['kind']
                     update(q.key, switchKind(q, kind))
                   }}
                 >
                   <option value="mc">Multiple choice</option>
+                  <option value="multi">Multi-select</option>
                   <option value="short">Short answer</option>
                 </select>
                 <button className="small danger" onClick={() => remove(q.key)}>Delete</button>
@@ -501,32 +538,78 @@ export function LessonBuilder() {
                     placeholder="e.g. Mitochondria make energy (ATP) for the cell. Accept any answer that mentions energy." />
                 </label>
               )}
-              {q.kind === 'mc' && (
+              {q.kind !== 'short' && (
                 <div className="stack">
                   {q.choices.map((c, ci) => (
                     <div key={ci} className="row">
-                      <input type="radio" name={`correct-${q.key}`} aria-label={`Choice ${ci + 1} is correct`} checked={q.correct_index === ci} onChange={() => update(q.key, { correct_index: ci })} />
+                      {q.kind === 'mc' ? (
+                        <input type="radio" name={`correct-${q.key}`} aria-label={`Choice ${ci + 1} is correct`} checked={q.correct_index === ci} onChange={() => update(q.key, { correct_index: ci })} />
+                      ) : (
+                        <input
+                          type="checkbox"
+                          aria-label={`Choice ${ci + 1} is correct`}
+                          checked={(q.correct_indexes ?? []).includes(ci)}
+                          onChange={(e) => {
+                            const set = new Set(q.correct_indexes ?? [])
+                            if (e.target.checked) set.add(ci)
+                            else set.delete(ci)
+                            update(q.key, { correct_indexes: [...set].sort((a, b) => a - b) })
+                          }}
+                        />
+                      )}
                       <input className="text grow" value={c} onChange={(e) => update(q.key, { choices: q.choices.map((x, j) => (j === ci ? e.target.value : x)) })} placeholder={`Choice ${String.fromCharCode(65 + ci)}`} />
                       {q.choices.length > 2 && (
-                        <button className="small" aria-label="Remove choice" onClick={() => {
-                          const choices = q.choices.filter((_, j) => j !== ci)
-                          // Removing the right answer must not silently make choice A right (on an assigned
-                          // lesson that would re-grade every student on save). Make the teacher pick again.
-                          const ki = q.correct_index
-                          update(q.key, { choices, correct_index: ki === null || ki === ci ? null : ki > ci ? ki - 1 : ki })
-                        }}>✕</button>
+                        // Removing a right answer never silently makes another choice right (on an assigned lesson that
+                        // would re-grade every student on save). The teacher picks again.
+                        <button className="small" aria-label="Remove choice" onClick={() => update(q.key, removeChoice(q, ci))}>✕</button>
                       )}
                     </div>
                   ))}
                   {q.choices.length < 6 && <button className="small" onClick={() => update(q.key, { choices: [...q.choices, ''] })}>+ Add choice</button>}
-                  <p className={q.correct_index === null ? 'error small' : 'muted small'}>Pick the right answer with the circle.</p>
+                  {q.kind === 'mc' ? (
+                    <p className={q.correct_index === null ? 'error small' : 'muted small'}>Pick the right answer with the circle.</p>
+                  ) : (
+                    <p className={(q.correct_indexes ?? []).length ? 'muted small' : 'error small'}>
+                      Tick every right answer. Students get it right only if they pick exactly these.
+                    </p>
+                  )}
                 </div>
               )}
             </li>
           ))}
         </ol>
 
-        {!fromEdpuzzle && importPanel}
+        {notes.length > 0 && (
+          <section aria-labelledby="notes-h" className="stack">
+            <h3 id="notes-h">Notes <span className="muted small">The video pauses to show each one. Not graded.</span></h3>
+            <ol className="cards">
+              {notes.map((n, i) => (
+                <li key={n.key} className="card stack">
+                  <div className="row">
+                    <strong>Note {i + 1}</strong>
+                    <input
+                      aria-label="Note time"
+                      className="text time"
+                      value={n.timeText}
+                      onChange={(e) => {
+                        const t = parseTime(e.target.value)
+                        updateNote(n.key, { timeText: e.target.value, ...(t !== null ? { at_s: t } : {}) })
+                      }}
+                      onBlur={sortNotes}
+                    />
+                    <button className="small" onClick={() => { const t = now(); updateNote(n.key, { at_s: t, timeText: formatTime(t) }); sortNotes() }}>
+                      Use current time
+                    </button>
+                    <button className="small danger" onClick={() => removeNote(n.key)}>Delete</button>
+                  </div>
+                  <textarea aria-label="Note" rows={2} maxLength={1000} value={n.body} onChange={(e) => updateNote(n.key, { body: e.target.value })}
+                    placeholder="e.g. Look at the graph: we'll use it in class tomorrow." />
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
 
         <details className="card">
           <summary>Paste a bunch of questions at once</summary>

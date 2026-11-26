@@ -4,7 +4,9 @@ import {
   canFinish,
   classifyRpcError,
   dueLabel,
+  dueNote,
   dueQuestion,
+  multiResponse,
   needsReconnect,
   progressPct,
   progressToSave,
@@ -147,5 +149,27 @@ describe('dueLabel', () => {
     expect(dueLabel(new Date(2026, 10, 24, 15, 0).toISOString(), now)?.text).toMatch(/^Due tomorrow/)
     expect(dueLabel(new Date(2026, 10, 20, 15, 0).toISOString(), now)).toMatchObject({ late: true })
     expect(dueLabel(null, now)).toBeNull()
+  })
+})
+
+describe('dueNote', () => {
+  const notes = [
+    { id: 'n1', at_s: 10, body: 'a' },
+    { id: 'n2', at_s: 30, body: 'b' },
+  ]
+  it('pauses for a note the playhead just reached, once', () => {
+    expect(dueNote(notes, new Set(), 9.9)).toBeNull()
+    expect(dueNote(notes, new Set(), 10.3)?.id).toBe('n1')
+    expect(dueNote(notes, new Set(['n1']), 10.3)).toBeNull()
+  })
+  it("doesn't stop for a note far behind the playhead (resume, seek back)", () => {
+    expect(dueNote(notes, new Set(), 25)).toBeNull()
+    expect(dueNote(undefined, new Set(), 10)).toBeNull()
+  })
+})
+
+describe('multiResponse', () => {
+  it('sorts and joins', () => {
+    expect(multiResponse(new Set([3, 0, 2]))).toBe('0,2,3')
   })
 })

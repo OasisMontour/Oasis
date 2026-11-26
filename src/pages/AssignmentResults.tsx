@@ -11,11 +11,14 @@ import {
   averageHint,
   buildCsv,
   choiceLetter,
+  choiceLetters,
+  completion,
   csvFilename,
   displayName,
   formatScore,
   gradesBusy,
   mcChoice,
+  multiChoices,
   needsGrading,
   questionStats,
   sortStudents,
@@ -26,6 +29,7 @@ import {
   type SortDir,
   type SortKey,
 } from '../lib/results'
+import { classroomStatus, type ClassroomState } from '../lib/assign'
 
 const studentKey = (s: ResultStudent) => s.student_id ?? `email:${s.email}`
 
@@ -42,6 +46,7 @@ export function AssignmentResults() {
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'name', dir: 'asc' })
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [onlyToGrade, setOnlyToGrade] = useState(false)
+  const [cw, setCw] = useState<{ state: ClassroomState | null; url: string | null }>({ state: null, url: null })
   const pendingGrades = useRef(0)
   // Same count as state, so Export and Send can wait for grade saves to land.
   const [savingGrades, setSavingGrades] = useState(0)
@@ -63,6 +68,9 @@ export function AssignmentResults() {
       const r = res as Results
       setData(r)
       setError(null)
+      // Draft or posted in Classroom (beta item 10). Not in the results payload; best effort.
+      const { data: st } = await supabase.from('assignments').select('google_coursework_state, google_coursework_url').eq('id', id).maybeSingle()
+      if (st) setCw({ state: (st as { google_coursework_state: ClassroomState | null }).google_coursework_state, url: (st as { google_coursework_url: string | null }).google_coursework_url })
       // grade_answer needs the attempt id. Use it from the payload when present, otherwise look it up.
       if (r.students.some((s) => s.student_id && s.attempt_id === undefined && Object.keys(s.answers).length > 0)) {
         const { data: rows } = await supabase.from('attempts').select('id, student_id').eq('assignment_id', id)
@@ -138,14 +146,22 @@ export function AssignmentResults() {
     setInfo(null)
     const { data: res, error: err } = await invokeFn<
       | { ok: true; pushed: number; not_in_classroom: string[]; needs_grading?: string[]; failed: { email: string; error: string }[] }
-      | { ok: false; error: string }
+      | { ok: false; error: string; url?: string | null }
     >('classroom', { action: 'push_grades', assignment_id: id })
     setSending(false)
     if (err || !res) return setNotice(`Couldn't send grades to Google Classroom. ${err?.message ?? ''}`.trim())
     if (!res.ok) {
       if (res.error === 'reconnect' || res.error === 'not_connected')
-        return setNotice('Google Classroom needs to be reconnected. Click Connect Google Classroom on your dashboard, then try again.')
-      if (res.error === 'not_posted') return setNotice("This assignment hasn't been posted to Google Classroom yet.")
+        return setNotice('Google Classroom needs to be reconnected. Open Settings, connect Google Classroom, then try again.')
+      if (res.error === 'not_posted') return setNotice("This assignment isn't in Google Classroom yet. Make the Classroom draft from your dashboard first.")
+      if (res.error === 'not_published') {
+        setCw((c) => ({ state: 'DRAFT', url: res.url ?? c.url }))
+        return setNotice("It's still a draft in Google Classroom. Pick a topic and post it there, then send grades again.")
+      }
+      if (res.error === 'deleted_in_classroom') {
+        setCw((c) => ({ ...c, state: 'DELETED' }))
+        return setNotice('This assignment was deleted in Google Classroom, so there is nowhere to send grades. Export a CSV instead.')
+      }
       return setNotice(`Couldn't send grades to Google Classroom: ${res.error}`)
     }
     let text = `Sent ${res.pushed} grade${res.pushed === 1 ? '' : 's'} to Google Classroom.`
@@ -203,9 +219,14 @@ export function AssignmentResults() {
     </th>
   )
 
+  const done = completion(summary)
+  const cwStatus = classroomStatus({ google_coursework_id: assignment.google_coursework_id, google_coursework_state: cw.state })
+  const anyFinished = students.some((s) => s.status === 'finished')
+  const seg = (n: number) => (summary.total ? `${(100 * n) / summary.total}%` : '0%')
+
   return (
     <main className="page results">
-      <BackLink />
+      <BackLink classId={assignment.class_id} className={assignment.class_name} />
       <div className="section-head results-head">
         <div>
           <h1>{assignment.lesson_title}</h1>
@@ -213,44 +234,82 @@ export function AssignmentResults() {
             {assignment.class_name} · {due ? `Due ${due}` : 'No due date'} · {questions.length} question{questions.length === 1 ? '' : 's'}
           </p>
         </div>
-        <div className="row">
-          {aiLeft > 0 && (
-            <button onClick={gradeWithAi} disabled={!!aiRunning} title="AI suggests a grade for each short answer. You can change any of them.">
-              {aiRunning ?? `Grade ${aiLeft} with AI`}
-            </button>
-          )}
-          {assignment.google_coursework_id && students.some((s) => s.status === 'finished') && (
-            <button onClick={sendGrades} disabled={sending || !!busy} title={busy ?? undefined}>{sending ? 'Sending…' : 'Send grades to Classroom'}</button>
-          )}
-          <button onClick={exportCsv} disabled={students.length === 0 || !!busy} title={busy ?? undefined}>Export CSV</button>
-        </div>
+        <button onClick={exportCsv} disabled={students.length === 0 || !!busy} title={busy ?? undefined}>Export CSV</button>
       </div>
       {busy && savingGrades > 0 && <p className="muted small" role="status">{busy} Export and Send wait until it's done.</p>}
       {info && <p className="muted" role="status">{info}</p>}
       {notice && <p className="error" role="alert">{notice}</p>}
 
-      <ul className="stats" aria-label="Summary">
-        <Stat n={summary.finished} label="Finished" of={summary.total} />
-        <Stat n={summary.in_progress} label="In progress" />
-        <Stat n={summary.not_started} label="Not started" />
-        <Stat n={summary.not_signed_in} label="Never signed in" />
-        <Stat n={summary.average === null ? '—' : formatScore(summary.average)} label="Class average" hint={averageHint(summary)} />
-        <li className={`stat${summary.needsGrading ? ' attention' : ''}`}>
-          <strong>{summary.needsGrading}</strong>
-          <span>To grade</span>
-          {/* Keep the way back once the filtered list is graded down to nothing (audit #22). */}
-          {(summary.needsGrading > 0 || onlyToGrade) && (
-            <button className="small" aria-pressed={onlyToGrade} onClick={() => setOnlyToGrade((v) => !v)}>
-              {onlyToGrade ? 'Show everyone' : 'Show these'}
-            </button>
-          )}
-        </li>
-      </ul>
+      {/* Beta item 12: the two things a teacher opens this page for, first. */}
+      <div className="r-top">
+        <section className="r-card" aria-labelledby="done-h">
+          <h2 id="done-h" className="r-label">Completion</h2>
+          <p className="r-big">
+            {done.done}<span className="of"> / {done.total} finished</span>
+          </p>
+          <div className="r-bar" role="img" aria-label={`${summary.finished} finished, ${summary.in_progress} in progress, ${summary.not_started} not started, ${summary.not_signed_in} never signed in`}>
+            <span className="finished" style={{ width: seg(summary.finished) }} />
+            <span className="in_progress" style={{ width: seg(summary.in_progress) }} />
+            <span className="not_started" style={{ width: seg(summary.not_started) }} />
+          </div>
+          <ul className="r-legend small">
+            <li><span className="dot in_progress" aria-hidden="true" />{summary.in_progress} in progress</li>
+            <li><span className="dot not_started" aria-hidden="true" />{summary.not_started} not started</li>
+            <li><span className="dot not_signed_in" aria-hidden="true" />{summary.not_signed_in} never signed in</li>
+          </ul>
+          <p className="muted small">
+            Class average {summary.average === null ? '—' : formatScore(summary.average)}
+            {` (${averageHint(summary)})`}
+            {summary.leftTab > 0 && ` · ${summary.leftTab} left the video at least once`}
+          </p>
+        </section>
+
+        <section className={`r-card${summary.needsGrading ? ' attention' : ''}`} aria-labelledby="todo-h">
+          <h2 id="todo-h" className="r-label">Needs you</h2>
+          <ul className="r-todo">
+            {summary.needsGrading > 0 ? (
+              <li>
+                <span><strong>{summary.needsGrading}</strong> short answer{summary.needsGrading === 1 ? '' : 's'} to grade</span>
+                <span className="row">
+                  <button className="small" aria-pressed={onlyToGrade} onClick={() => setOnlyToGrade((v) => !v)}>
+                    {onlyToGrade ? 'Show everyone' : 'Show these students'}
+                  </button>
+                  {aiLeft > 0 && (
+                    <button className="small" onClick={gradeWithAi} disabled={!!aiRunning} title="AI suggests a grade for each short answer. You can change any of them.">
+                      {aiRunning ?? `Grade ${aiLeft} with AI`}
+                    </button>
+                  )}
+                </span>
+              </li>
+            ) : onlyToGrade ? (
+              <li>
+                <span className="muted">All graded.</span>
+                <button className="small" onClick={() => setOnlyToGrade(false)}>Show everyone</button>
+              </li>
+            ) : (
+              <li className="muted">Nothing to grade{anyFinished ? '. Choice questions are scored for you.' : ' yet.'}</li>
+            )}
+            {cwStatus === 'DRAFT' && (
+              <li>
+                <span>Still a draft in Google Classroom, so students can't see it there.</span>
+                {cw.url && <a href={cw.url} target="_blank" rel="noreferrer">Pick a topic and post</a>}
+              </li>
+            )}
+            {cwStatus === 'DELETED' && <li><span>Deleted in Google Classroom. Export a CSV for your gradebook.</span></li>}
+            {cwStatus === 'PUBLISHED' && anyFinished && (
+              <li>
+                <span>Send finished scores to Google Classroom.</span>
+                <button className="small primary" onClick={sendGrades} disabled={sending || !!busy} title={busy ?? undefined}>{sending ? 'Sending…' : 'Send grades'}</button>
+              </li>
+            )}
+          </ul>
+        </section>
+      </div>
 
       <section>
-        <h2>Students</h2>
+        <h2>Students <span className="muted small">· open a name to see every answer</span></h2>
         {students.length === 0 ? (
-          <p className="muted">No students in this class yet. They come from Google Classroom: sync it from your dashboard.</p>
+          <p className="muted">No students in this class yet. They come from Google Classroom: they appear here after the next roster sync.</p>
         ) : (
           <div className="table-wrap">
             <table className="results-table">
@@ -259,7 +318,7 @@ export function AssignmentResults() {
                   {sortHeader('name', 'Student')}
                   {sortHeader('status', 'Status')}
                   {sortHeader('score', 'Score')}
-                  <th scope="col">Notes</th>
+                  <th scope="col"><span className="sr-only">Flags</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -320,8 +379,8 @@ export function AssignmentResults() {
         )}
       </section>
 
-      <section>
-        <h2>By question</h2>
+      <details className="r-more">
+        <summary><h2>By question</h2> <span className="muted small">which questions the class missed</span></summary>
         {questions.length === 0 ? (
           <p className="muted">This lesson has no questions. <Link to={`/teacher/lessons/${assignment.lesson_id}`}>Add some</Link>.</p>
         ) : (
@@ -332,19 +391,19 @@ export function AssignmentResults() {
               return (
                 <li key={q.id} className={`card${missed ? ' missed' : ''}`}>
                   <div className="qhead">
-                    <span className="muted small">Q{i + 1} · {formatTime(q.at_s)} · {q.kind === 'mc' ? 'Multiple choice' : 'Short answer'}</span>
+                    <span className="muted small">Q{i + 1} · {formatTime(q.at_s)} · {KIND_LABEL[q.kind]}</span>
                     <span className="pct">
                       {st.pctCorrect === null ? <span className="muted">No answers yet</span> : <><strong>{Math.round(st.pctCorrect)}%</strong> correct</>}
                     </span>
                   </div>
                   <p className="prompt">{q.prompt}</p>
                   {missed && <p className="missed-note">Most students missed this one.</p>}
-                  {q.kind === 'mc' ? (
+                  {q.kind !== 'short' ? (
                     <ul className="dist" aria-label={`Answers picked for question ${i + 1}`}>
                       {(q.choices ?? []).map((c, ci) => {
                         const n = st.choiceCounts[ci] ?? 0
                         const pct = st.answered ? (100 * n) / st.answered : 0
-                        const right = ci === q.correct_index
+                        const right = q.kind === 'multi' ? !!q.correct_indexes?.includes(ci) : ci === q.correct_index
                         return (
                           <li key={ci} className={right ? 'right' : ''}>
                             <span className="choice">
@@ -369,22 +428,19 @@ export function AssignmentResults() {
             })}
           </ol>
         )}
-      </section>
+      </details>
     </main>
   )
 }
 
-function BackLink() {
-  return <p className="back"><Link to="/teacher">← Back to dashboard</Link></p>
-}
+const KIND_LABEL: Record<ResultQuestion['kind'], string> = { mc: 'Multiple choice', multi: 'Select all', short: 'Short answer' }
 
-function Stat({ n, label, of, hint }: { n: number | string; label: string; of?: number; hint?: string }) {
+function BackLink({ classId, className }: { classId?: string; className?: string }) {
   return (
-    <li className="stat">
-      <strong>{n}{of !== undefined && <span className="of"> / {of}</span>}</strong>
-      <span>{label}</span>
-      {hint && <span className="muted small">{hint}</span>}
-    </li>
+    <p className="back">
+      <Link to="/teacher">← Home</Link>
+      {classId && <> · <Link to={`/teacher/classes/${classId}`}>{className}</Link></>}
+    </p>
   )
 }
 
@@ -429,6 +485,8 @@ function StudentAnswers({
               <div className="muted small">No answer yet</div>
             ) : q.kind === 'mc' ? (
               <McAnswer q={q} response={a.response} correct={a.is_correct === true} />
+            ) : q.kind === 'multi' ? (
+              <MultiAnswer q={q} response={a.response} correct={a.is_correct === true} />
             ) : (
               <>
                 <blockquote className="short">{a.response}</blockquote>
@@ -474,6 +532,23 @@ function McAnswer({ q, response, correct }: { q: ResultQuestion; response: strin
         <>
           <span className="error">✗ Picked {label(picked)}</span>
           {q.correct_index !== null && <span className="muted"> · Correct: {label(q.correct_index)}</span>}
+        </>
+      )}
+    </div>
+  )
+}
+
+function MultiAnswer({ q, response, correct }: { q: ResultQuestion; response: string; correct: boolean }) {
+  const picked = multiChoices(response)
+  const key = q.correct_indexes ?? []
+  return (
+    <div className="small">
+      {correct ? (
+        <span className="ok">✓ Picked {choiceLetters(picked)}</span>
+      ) : (
+        <>
+          <span className="error">✗ Picked {choiceLetters(picked)}</span>
+          {key.length > 0 && <span className="muted"> · Right set: {choiceLetters(key)}</span>}
         </>
       )}
     </div>
