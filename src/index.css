@@ -197,6 +197,33 @@ details.card > p:first-of-type, details.card > div:first-of-type { margin-top: 1
 .stat.attention { background: var(--sun-soft); box-shadow: inset 0 3px 0 var(--sun-line); }
 .stat button.small { justify-self: start; margin-top: 4px; }
 @media (max-width: 860px) { .stats { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); } .stat + .stat { border-left: 0; } }
+/* Beta item 12: completion + what needs the teacher, before the table. */
+.r-top { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; margin: 18px 0 28px; }
+@media (max-width: 860px) { .r-top { grid-template-columns: 1fr; } }
+.r-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px 20px; display: grid; gap: 10px; align-content: start; }
+.r-card.attention { background: var(--sun-soft); border-color: var(--sun-line); }
+.r-label { margin: 0; font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.r-big { margin: 0; font-family: var(--display); font-size: 2.4rem; font-weight: 700; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.r-big .of { font-size: 1rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+.r-bar { display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: var(--sand-2); }
+.r-bar > span { display: block; height: 100%; }
+.r-bar .finished, .r-legend .dot.finished { background: var(--ok); }
+.r-bar .in_progress, .r-legend .dot.in_progress { background: var(--water); }
+.r-bar .not_started, .r-legend .dot.not_started { background: #c3b9a3; }
+.r-legend { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); }
+.r-legend .dot { display: inline-block; width: .6em; height: .6em; border-radius: 2px; margin-right: 6px; background: var(--sand-2); border: 1px solid var(--line-2); }
+.r-legend .dot.in_progress, .r-legend .dot.not_started { border: 0; }
+.r-card .muted.small { margin: 0; }
+.r-todo { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.r-todo > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.r-todo > li + li { border-top: 1px solid var(--line); padding-top: 10px; }
+.r-more { margin-top: 32px; }
+.r-more > summary { cursor: pointer; display: flex; align-items: baseline; gap: 10px; list-style: none; }
+.r-more > summary::-webkit-details-marker { display: none; }
+.r-more > summary h2 { margin: 0; display: inline; }
+.r-more > summary h2::before { content: '▸ '; color: var(--muted); }
+.r-more[open] > summary h2::before { content: '▾ '; }
+.r-more[open] > summary { margin-bottom: 14px; }
 .results-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
 .results-table th, .results-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; font-weight: 400; }
 .results-table thead th { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--sand-2); }

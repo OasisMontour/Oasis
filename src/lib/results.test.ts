@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aiPending, aiToReview, buildCsv, csvField, csvFilename, questionStats, sortStudents, summarize, type ResultQuestion, type ResultStudent } from './results'
+import { aiPending, aiToReview, buildCsv, choiceLetters, completion, csvField, csvFilename, multiChoices, questionStats, sortStudents, summarize, type ResultQuestion, type ResultStudent } from './results'
 
 const questions: ResultQuestion[] = [
   { id: 'q1', at_s: 10, kind: 'mc', prompt: 'Pick one', choices: ['Red', 'Blue', 'Green'], correct_index: 1 },
@@ -113,5 +113,24 @@ describe('AI grading helpers', () => {
   })
   it('CSV says which grades came from AI', () => {
     expect(buildCsv({ questions: qs, students: [st[1]] })).toContain('c (correct, by AI)')
+  })
+})
+
+describe('multi-select results (beta items 7, 12)', () => {
+  const multi: ResultQuestion = { id: 'm', at_s: 5, kind: 'multi', prompt: 'Pick all', choices: ['a', 'b', 'c'], correct_index: null, correct_indexes: [0, 2] }
+  it('parses responses and counts every picked choice', () => {
+    expect(multiChoices('0,2')).toEqual([0, 2])
+    expect(multiChoices('x')).toEqual([])
+    expect(choiceLetters([0, 2])).toBe('A, C')
+    const s = [
+      student({ answers: { m: { response: '0,2', is_correct: true, graded_by: 'auto' } } }),
+      student({ answers: { m: { response: '0', is_correct: false, graded_by: 'auto' } } }),
+    ]
+    expect(questionStats([multi], s)[0]).toMatchObject({ choiceCounts: [2, 0, 1], correct: 1, graded: 2 })
+    expect(buildCsv({ questions: [multi], students: s })).toContain('A. a; C. c (correct)')
+  })
+  it('completion is finished out of everyone', () => {
+    expect(completion(summarize(students, questions))).toEqual({ done: 2, total: 4, pct: 50 })
+    expect(completion(summarize([], questions)).pct).toBe(0)
   })
 })
