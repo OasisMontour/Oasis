@@ -85,6 +85,9 @@ export function TeacherHome() {
         <div className="section-head">
           <h2>Classes</h2>
           <span className="row">
+            {classroom.statusError && classroom.connected === null && (
+              <button onClick={classroom.recheck}>Check Google Classroom again</button>
+            )}
             {classroom.connected === false && <button onClick={classroom.connect}>Connect Google Classroom</button>}
             {classroom.connected && (
               <>
@@ -94,6 +97,9 @@ export function TeacherHome() {
             )}
           </span>
         </div>
+        {classroom.statusError && classroom.connected === null && (
+          <p className="error" role="status">Couldn't check your Google Classroom connection. Your classes below are still here.</p>
+        )}
         {classroom.message && <p className={classroom.message.kind} role="status">{classroom.message.text}</p>}
         {loaded && classes.length === 0 && <p className="empty small">No classes yet. Your classes and students come from Google Classroom: connect it above and they'll show up here.</p>}
         <ul className="cards" hidden={classes.length === 0}>

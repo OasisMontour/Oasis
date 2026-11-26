@@ -13,7 +13,10 @@ type FnResult =
   | { ok: false; error: string; missing?: string[] }
 
 export type ClassroomSync = {
-  connected: boolean | null // null = still loading
+  connected: boolean | null // null = still loading, or the status check failed (see statusError)
+  /** classroom_status couldn't be read. Unknown is not "disconnected": offer a re-check, not a reconnect (audit #27). */
+  statusError: boolean
+  recheck: () => Promise<void>
   busy: boolean
   message: { kind: 'ok' | 'error'; text: string } | null
   connect: () => Promise<void>
@@ -28,7 +31,17 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
   const [status, setStatus] = useState<Status | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<ClassroomSync['message']>(null)
+  const [statusError, setStatusError] = useState(false)
   const started = useRef(false)
+
+  /** Reads the connection status, with one quiet retry. Null if it couldn't be read. */
+  const readStatus = useCallback(async (): Promise<Status | null> => {
+    for (let i = 0; i < 2; i++) {
+      const { data, error } = await supabase.rpc('classroom_status')
+      if (!error) return (data as Status | null) ?? { connected: false, last_synced_at: null }
+    }
+    return null
+  }, [])
 
   const call = useCallback(
     async (body: Record<string, unknown>, quiet = false) => {
@@ -74,9 +87,10 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
     if (!profile || started.current) return
     started.current = true
     ;(async () => {
-      const { data } = await supabase.rpc('classroom_status')
-      const s = (data as Status | null) ?? { connected: false, last_synced_at: null }
-      setStatus(s)
+      const read = await readStatus()
+      setStatusError(!read)
+      const s = read ?? { connected: false, last_synced_at: null }
+      if (read) setStatus(read)
       const intent = takeClassroomIntent('/teacher') && !!session?.provider_refresh_token
       if (params.get('classroom') === '1' || intent) {
         // Back from the Google consent screen: hand the refresh token to the server, which stores it and syncs.
@@ -91,12 +105,20 @@ export function useClassroomSync(onImported: () => void): ClassroomSync {
         return
       }
       const stale = !s.last_synced_at || Date.now() - new Date(s.last_synced_at).getTime() > AUTO_SYNC_AFTER_MS
-      if (s.connected && stale) call({ action: 'sync' }, true)
+      if (read && s.connected && stale) call({ action: 'sync' }, true)
     })()
-  }, [profile, session, params, setParams, call])
+  }, [profile, session, params, setParams, call, readStatus])
+
+  const recheck = useCallback(async () => {
+    const read = await readStatus()
+    setStatusError(!read)
+    if (read) setStatus(read)
+  }, [readStatus])
 
   return {
     connected: status?.connected ?? null,
+    statusError,
+    recheck,
     busy,
     message,
     connect: () => connectClassroom(),

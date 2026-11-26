@@ -13,6 +13,14 @@ describe('safeNext', () => {
     expect(safeNext('/teacher/lessons/x', 'student')).toBe('/student')
     expect(safeNext('/student/assignments/x', 'teacher')).toBe('/teacher')
   })
+  it('keeps shared destinations and lets their guards decide (audit #25)', () => {
+    expect(safeNext('/admin', 'teacher')).toBe('/admin')
+    expect(safeNext('/admin', 'student')).toBe('/admin')
+    expect(safeNext('/changelog', 'student')).toBe('/changelog')
+    expect(safeNext('/report?from=%2Fteacher', 'teacher')).toBe('/report?from=%2Fteacher')
+    expect(safeNext('/administrator', 'teacher')).toBe('/teacher')
+    expect(safeNext('/reports', 'student')).toBe('/student')
+  })
   it('ignores anything that could leave the site', () => {
     expect(safeNext('https://evil.example/student/x', 'student')).toBe('/student')
     expect(safeNext('//evil.example/student/x', 'student')).toBe('/student')

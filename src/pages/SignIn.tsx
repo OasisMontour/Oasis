@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { peekClassroomIntent, useAuth } from '../auth/AuthProvider'
+import { AccountError } from '../auth/AccountError'
 import { rememberNext, takeNext } from '../lib/next'
 
 export function SignIn() {
-  const { loading, session, profile, signInWithGoogle, connectClassroom } = useAuth()
+  const { loading, session, profile, profileError, signInWithGoogle, connectClassroom } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const from = (useLocation().state as { from?: string } | null)?.from
@@ -25,6 +26,7 @@ export function SignIn() {
   }, [signedIn, profile, session, navigate])
 
   if (signedIn) return null
+  if (!loading && session && !profile && profileError) return <AccountError />
 
   return (
     <main className="signin">
