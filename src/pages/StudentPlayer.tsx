@@ -6,8 +6,11 @@ import {
   canFinish,
   classifyRpcError,
   dueQuestion,
+  maxWatchedAfterEnd,
   needsReconnect,
   nextUnanswered,
+  onVideoEnded,
+  positionToSave,
   progressToSave,
   SKIP_TOLERANCE_S,
   tick,
@@ -82,6 +85,10 @@ export function StudentPlayer() {
     maxWatched: 0,
     confirmed: 0,
     savedPos: -1,
+    /** Last playhead position we trust. The player reports 0 until it's started, so until then this is the saved resume point. */
+    lastPos: 0,
+    /** Wall clock (ms) of the previous watchdog tick, to allow for a busy device skipping ticks. */
+    lastTickAt: 0,
     fails: 0,
     ended: false,
     leaving: false,
@@ -129,6 +136,8 @@ export function StudentPlayer() {
       .then((l) => {
         if (cancelled) return
         applyServerState(l)
+        m.current.lastPos = l.last_pos_s
+        m.current.savedPos = progressToSave(Math.min(l.last_pos_s, l.max_watched_s), l.duration_s)
         setCurrent(l.last_pos_s)
         setPhaseBoth(l.finished_at ? 'done' : 'ready')
       })
@@ -199,7 +208,9 @@ export function StudentPlayer() {
     const l = s.lesson
     if (!l || s.phase === 'done') return true
     const value = progressToSave(s.maxWatched, l.duration_s)
-    const pos = Math.min(progressToSave(now(), l.duration_s), value)
+    // Before Start the player hasn't been seeked to the resume point yet and reports 0: saving that
+    // would throw away where the student was (audit #15).
+    const pos = positionToSave(s.phase === 'playing' ? player.current?.getCurrentTime() : null, s.lastPos, value, l.duration_s)
     if (value === s.confirmed && pos === s.savedPos) return true
     try {
       await saveProgress(l.attempt_id, value, pos)
@@ -294,6 +305,8 @@ export function StudentPlayer() {
   const maybeFinish = useCallback(() => {
     const s = m.current
     if (!s.lesson || !s.ended) return
+    s.maxWatched = maxWatchedAfterEnd(s.maxWatched, s.lesson.duration_s, s.lesson.questions, s.answered)
+    setMaxShown(s.maxWatched)
     if (canFinish(s.maxWatched, s.lesson.duration_s, s.lesson.questions, s.answered)) void finish()
     else {
       const q = nextUnanswered(s.lesson.questions, s.answered)
@@ -367,18 +380,19 @@ export function StudentPlayer() {
                 setPlaying(false)
                 const l = s.lesson
                 if (!l) return
-                const t = now()
-                const r = tick({ current: t, maxWatched: s.maxWatched, durationS: l.duration_s, questions: l.questions, answered: s.answered })
-                if (r.snapBack) {
+                const out = onVideoEnded({ current: now(), maxWatched: s.maxWatched, durationS: l.duration_s, questions: l.questions, answered: s.answered })
+                if (out.snapBack) {
                   player.current?.seekTo(s.maxWatched, true)
                   return
                 }
-                s.maxWatched = r.maxWatched
-                if (r.question) return showQuestion(r.question)
-                // Honestly reached the end. YouTube's length can be a little short of what the teacher saved.
-                s.maxWatched = l.duration_s
+                // Honestly reached the end (YouTube's length can be a little short of what the teacher saved).
+                // Record that BEFORE showing a question that sits at the very end, so answering it finishes
+                // the lesson instead of calling Play and replaying the video (audit #14).
+                s.maxWatched = out.maxWatched
+                s.lastPos = out.maxWatched
                 setMaxShown(s.maxWatched)
                 s.ended = true
+                if (out.question) return showQuestion(out.question)
                 maybeFinish()
               }
             },
@@ -418,6 +432,7 @@ export function StudentPlayer() {
   // ------------------------------------------------------------------ the 250ms watchdog
   useEffect(() => {
     if (phase !== 'playing' || !playerReady) return
+    m.current.lastTickAt = 0 // time spent outside 'playing' isn't playback
     const id = window.setInterval(() => {
       const s = m.current
       const p = player.current
@@ -425,13 +440,17 @@ export function StudentPlayer() {
       if (!p || !l) return
       if (p.getPlaybackRate() !== 1) p.setPlaybackRate(1)
       const t = now()
-      const r = tick({ current: t, maxWatched: s.maxWatched, durationS: l.duration_s, questions: l.questions, answered: s.answered })
+      const at = performance.now()
+      const elapsedS = s.lastTickAt ? (at - s.lastTickAt) / 1000 : 0
+      s.lastTickAt = at
+      const r = tick({ current: t, maxWatched: s.maxWatched, durationS: l.duration_s, questions: l.questions, answered: s.answered, elapsedS })
       if (r.snapBack) {
         p.seekTo(s.maxWatched, true)
         setCurrent(s.maxWatched)
         return
       }
       s.maxWatched = r.maxWatched
+      s.lastPos = t
       setCurrent(t)
       setMaxShown(r.maxWatched)
       if (r.question && !s.question) showQuestion(r.question)
@@ -561,10 +580,16 @@ export function StudentPlayer() {
   }
 
   const seekTo = (frac: number) => {
+    const l = m.current.lesson
+    if (l) seekToS(frac * l.duration_s)
+  }
+
+  /** Seek anywhere already watched, never past it. */
+  const seekToS = (sec: number) => {
     const s = m.current
     const l = s.lesson
     if (!l || s.phase !== 'playing' || s.question) return
-    const target = Math.min(frac * l.duration_s, s.maxWatched)
+    const target = Math.max(0, Math.min(sec, s.maxWatched))
     player.current?.seekTo(target, true)
     setCurrent(target)
     if (target < l.duration_s - 1) s.ended = false
@@ -730,6 +755,18 @@ export function StudentPlayer() {
             aria-valuemax={Math.round(l?.duration_s ?? 0)}
             aria-valuenow={Math.round(current)}
             aria-valuetext={`${formatTime(current)} of ${formatTime(l?.duration_s ?? 0)}`}
+            aria-disabled={phase !== 'playing' || !!question}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              // Keyboard slider (audit #18): arrows step 5s, Home/End jump to the start or as far as watched.
+              const step = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5, PageDown: -30, PageUp: 30 }[e.key]
+              if (step === undefined && e.key !== 'Home' && e.key !== 'End') return
+              e.preventDefault()
+              e.stopPropagation()
+              if (e.key === 'Home') seekToS(0)
+              else if (e.key === 'End') seekToS(m.current.maxWatched)
+              else seekToS(now() + (step as number))
+            }}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
               seekTo((e.clientX - r.left) / r.width)
@@ -959,6 +996,9 @@ function FatalScreen({ fatal, email, onSwitch }: { fatal: Fatal; email: string; 
             <>
               <h1>The video won't play</h1>
               <p>{fatal.message}</p>
+              <button className="s-btn primary big" onClick={() => window.location.reload()}>
+                Try again
+              </button>
             </>
           ) : (
             <>

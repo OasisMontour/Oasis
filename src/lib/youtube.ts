@@ -57,24 +57,39 @@ declare global {
 
 let apiPromise: Promise<YTNamespace> | null = null
 
-/** Loads https://www.youtube.com/iframe_api once and resolves with window.YT. */
-export function loadYouTubeApi(): Promise<YTNamespace> {
+/** How long to wait for YouTube's ready callback before giving up (a retry starts over). */
+export const YT_LOAD_TIMEOUT_MS = 20_000
+
+/**
+ * Loads https://www.youtube.com/iframe_api once and resolves with window.YT. If the script fails, or
+ * loads but never calls back, the promise rejects and the next call tries again instead of reusing a
+ * promise that will never settle (audit #19).
+ */
+export function loadYouTubeApi(timeoutMs = YT_LOAD_TIMEOUT_MS): Promise<YTNamespace> {
   if (window.YT?.Player) return Promise.resolve(window.YT)
   if (!apiPromise) {
-    apiPromise = new Promise((resolve, reject) => {
+    const p: Promise<YTNamespace> = new Promise((resolve, reject) => {
+      const fail = (msg: string) => {
+        clearTimeout(timer)
+        if (apiPromise === p) apiPromise = null
+        reject(new Error(msg))
+      }
+      const timer = setTimeout(
+        () => fail('YouTube is taking too long to load. Check your connection and try again.'),
+        timeoutMs,
+      )
       const prev = window.onYouTubeIframeAPIReady
       window.onYouTubeIframeAPIReady = () => {
         prev?.()
+        clearTimeout(timer)
         resolve(window.YT!)
       }
       const s = document.createElement('script')
       s.src = 'https://www.youtube.com/iframe_api'
-      s.onerror = () => {
-        apiPromise = null
-        reject(new Error('Could not load YouTube. Check that YouTube is not blocked on this network.'))
-      }
+      s.onerror = () => fail('Could not load YouTube. Check that YouTube is not blocked on this network.')
       document.head.appendChild(s)
     })
+    apiPromise = p
   }
   return apiPromise
 }
