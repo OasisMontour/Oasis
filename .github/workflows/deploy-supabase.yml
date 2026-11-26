@@ -8,6 +8,10 @@
 name: Deploy Supabase
 
 on:
+  # Merges that touch the backend deploy it automatically, so the live DB never lags the site.
+  push:
+    branches: [main]
+    paths: ['supabase/**']
   workflow_dispatch:
     inputs:
       what:
