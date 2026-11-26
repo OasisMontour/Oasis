@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/bulkPaste'
 import { parseEdpuzzlePaste } from '../lib/edpuzzleImport'
 import { readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
+import { handoffMessage, readYouTubeHandoff } from '../lib/youtubeHandoff'
 import { formatTime, parseTime } from '../lib/time'
 import { blankQuestion, removeChoice, switchKind, videoProblem, type DraftNote } from '../lib/builder'
 import { AiDraftPanel } from '../components/AiDraftPanel'
@@ -24,11 +25,16 @@ export function LessonBuilder() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { profile } = useAuth()
 
-  const [videoInput, setVideoInput] = useState('')
-  const [youtubeId, setYoutubeId] = useState<string | null>(null)
+  // Arrivals from the Send to Oasis extension (or any /teacher/lessons/new?v=… link). Read once, on first render,
+  // so the video and the AI box's transcript are there from the start. New lessons only; ?copy wins.
+  const [handoff] = useState(() =>
+    isNew && !searchParams.get('copy') ? readYouTubeHandoff(window.location.search, window.location.hash) : null,
+  )
+  const [videoInput, setVideoInput] = useState(handoff ? `https://youtu.be/${handoff.videoId}` : '')
+  const [youtubeId, setYoutubeId] = useState<string | null>(handoff?.videoId ?? null)
   const [duration, setDuration] = useState<number | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(handoff?.title ?? '')
   // Free-text subject is gone from the form (beta item 5); it's kept as loaded for the planned shared library.
   const [subject, setSubject] = useState('')
   // The class this lesson is for: only classes this teacher teaches. Carried into assignment.
@@ -275,6 +281,12 @@ export function LessonBuilder() {
     touch()
   }, [isNew])
 
+  // Drop the transcript from the address bar once it's in the form (so a reload or a shared link doesn't carry it).
+  useEffect(() => {
+    if (handoff && window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  }, [handoff])
+  const handoffNote = handoff ? handoffMessage(handoff) : null
+
   // ---- save
   const problems = (): string[] => {
     const out: string[] = []
@@ -432,6 +444,8 @@ export function LessonBuilder() {
         </div>
       )}
 
+      {handoffNote && <p className={handoffNote.kind} role="status">{handoffNote.text}</p>}
+
       <div className="builder-grid">
       <section className="stack builder-media">
         <label>
@@ -489,7 +503,8 @@ export function LessonBuilder() {
 
         <AiDraftPanel
           durationS={duration}
-          open={searchParams.get('ai') === '1'}
+          open={searchParams.get('ai') === '1' || Boolean(handoff?.transcript)}
+          initialMaterial={handoff?.transcript}
           onDrafts={(qs) => {
             setQuestions((cur) => [...cur, ...qs.map(toDraft)].sort((a, b) => a.at_s - b.at_s))
             setSource((s) => (s === 'manual' ? 'ai' : s))

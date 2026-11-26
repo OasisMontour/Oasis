@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { DraftQuestion } from '../lib/bulkPaste'
 import { AI_MATERIAL_MAX, AI_MATERIAL_MIN, aiDraftError, draftQuestionsWithAi, type AiDraftKind } from '../lib/aiDraft'
+import { trimTranscript } from '../lib/youtubeHandoff'
 
 /**
  * "Draft questions with AI" in the lesson builder. The teacher pastes material they're allowed to share (a
@@ -10,13 +11,16 @@ import { AI_MATERIAL_MAX, AI_MATERIAL_MIN, aiDraftError, draftQuestionsWithAi, t
 export function AiDraftPanel({
   durationS,
   open,
+  initialMaterial,
   onDrafts,
 }: {
   durationS: number | null
   open?: boolean
+  /** Pre-fill, e.g. the transcript the Send to Oasis extension brought over. Read on first render only. */
+  initialMaterial?: string
   onDrafts: (qs: DraftQuestion[]) => void
 }) {
-  const [material, setMaterial] = useState('')
+  const [material, setMaterial] = useState(initialMaterial ?? '')
   const [count, setCount] = useState(5)
   const [kinds, setKinds] = useState<Set<AiDraftKind>>(new Set(['mc', 'short']))
   const [ok, setOk] = useState(false)
@@ -77,7 +81,17 @@ export function AiDraftPanel({
           placeholder={'0:00 Today we look at how cells get energy…\n1:12 The mitochondria…'}
           disabled={busy}
         />
-        <p className="muted">{len.toLocaleString()} / {AI_MATERIAL_MAX.toLocaleString()} characters</p>
+        <p className="muted">
+          {len.toLocaleString()} / {AI_MATERIAL_MAX.toLocaleString()} characters
+          {len > AI_MATERIAL_MAX && (
+            <>
+              {' '}
+              <button type="button" className="link" onClick={() => setMaterial(trimTranscript(material.trim(), AI_MATERIAL_MAX))} disabled={busy}>
+                Keep the first {AI_MATERIAL_MAX.toLocaleString()}
+              </button>
+            </>
+          )}
+        </p>
         <div className="row">
           <label>
             Questions{' '}
