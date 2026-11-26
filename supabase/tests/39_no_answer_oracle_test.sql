@@ -3,8 +3,9 @@
 \set ON_ERROR_STOP on
 \set QUIET on
 
-insert into lessons (id, teacher_id, title, youtube_id, duration_s)
-  values ('20000000-0000-0000-0000-000000000079', '00000000-0000-0000-0000-0000000000a1', 'Oracle', 'oracleoracl', 100);
+-- Beta item 11 turned right/wrong feedback on by default; a lesson with show_feedback off keeps the oracle closed.
+insert into lessons (id, teacher_id, title, youtube_id, duration_s, show_feedback)
+  values ('20000000-0000-0000-0000-000000000079', '00000000-0000-0000-0000-0000000000a1', 'Oracle', 'oracleoracl', 100, false);
 insert into questions (id, lesson_id, at_s, kind, prompt, choices, correct_index) values
   ('30000000-0000-0000-0000-000000000791', '20000000-0000-0000-0000-000000000079', 0, 'mc', 'Pick one', '["a","b","c"]', 2);
 insert into assignments (id, lesson_id, class_id, google_coursework_id)
@@ -19,8 +20,8 @@ select tests.become('00000000-0000-0000-0000-0000000000b1');
 select get_student_lesson('40000000-0000-0000-0000-000000000079') as l \gset
 select (:'l'::jsonb ->> 'attempt_id') as att \gset
 select tests.ok(not (:'l'::jsonb ? 'score'), 'player payload has no score');
-select tests.ok((select pg_typeof(submit_answer(:'att', '30000000-0000-0000-0000-000000000791', '2'))::text) = 'void',
-  'submit_answer returns nothing (no right/wrong)');
+select tests.ok(submit_answer(:'att', '30000000-0000-0000-0000-000000000791', '2') = '{"result":"submitted"}',
+  'feedback off: submit_answer says only "submitted" (no right/wrong)');
 select tests.ok((select count(*) from answers) = 0, 'student cannot read is_correct back over REST');
 select tests.ok(tests.throws('select score from attempts'), 'student cannot read attempts.score');
 select tests.ok((select max_watched_s from attempts where id = :'att') = 0, 'student can still read their own progress');
