@@ -10,6 +10,7 @@ import { AiDraftPanel } from '../components/AiDraftPanel'
 import { AssignDialog, type AssignClass } from '../components/AssignDialog'
 import { useAuth } from '../auth/AuthProvider'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
+import { readTeacherDefaults } from '../lib/prefs'
 
 type Draft = DraftQuestion & { key: string; timeText: string }
 
@@ -40,9 +41,11 @@ export function LessonBuilder() {
   // its setting on save. Changing existing sharing is a separate decision.
   const [shared, setShared] = useState(false)
   const copyId = isNew ? searchParams.get('copy') : null
-  const [fullscreen, setFullscreen] = useState(true)
-  const [aiGrade, setAiGrade] = useState(false)
-  const [showFeedback, setShowFeedback] = useState(true)
+  // New lessons start from the teacher's defaults in Settings; loading a lesson overwrites these.
+  const [startDefaults] = useState(readTeacherDefaults)
+  const [fullscreen, setFullscreen] = useState(startDefaults.fullscreen)
+  const [aiGrade, setAiGrade] = useState(startDefaults.aiGrade)
+  const [showFeedback, setShowFeedback] = useState(startDefaults.showFeedback)
   const [notes, setNotes] = useState<DraftNote[]>([])
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.

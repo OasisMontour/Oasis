@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { createAssignment, DEFAULT_INSTRUCTIONS, localNow, makeClassroomDraft, type ClassroomState } from '../lib/assign'
+import { readTeacherDefaults } from '../lib/prefs'
 
 export type AssignClass = { id: string; name: string }
 
@@ -26,7 +27,7 @@ export function AssignDialog({
   const open = classes.filter((c) => !assignedClassIds.has(c.id))
   const [classId, setClassId] = useState(initialClassId && open.some((c) => c.id === initialClassId) ? initialClassId : (open[0]?.id ?? ''))
   const [due, setDue] = useState('')
-  const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS)
+  const [instructions, setInstructions] = useState(() => readTeacherDefaults().instructions.trim() || DEFAULT_INSTRUCTIONS)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ assignmentId: string; state: ClassroomState | null; url: string | null; classroomError?: string } | null>(null)

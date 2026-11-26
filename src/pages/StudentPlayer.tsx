@@ -34,7 +34,7 @@ import {
 } from '../lib/studentApi'
 import { formatTime } from '../lib/time'
 import { loadYouTubeApi, YT_STATE, type YTPlayer } from '../lib/youtube'
-import { readPrefs } from '../lib/studentPrefs'
+import { readPrefs } from '../lib/prefs'
 import '../student.css'
 
 const POLL_MS = 250
