@@ -5,7 +5,7 @@ import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/b
 import { parseEdpuzzlePaste } from '../lib/edpuzzleImport'
 import { readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
-import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
+import { blankQuestion, removeChoice, switchKind, videoProblem, type DraftNote } from '../lib/builder'
 import { AiDraftPanel } from '../components/AiDraftPanel'
 import { AssignDialog, type AssignClass } from '../components/AssignDialog'
 import { useAuth } from '../auth/AuthProvider'
@@ -14,7 +14,8 @@ import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } fr
 type Draft = DraftQuestion & { key: string; timeText: string }
 
 let keySeq = 0
-const toDraft = (q: DraftQuestion): Draft => ({ ...q, key: `q${++keySeq}`, timeText: formatTime(q.at_s) })
+const toDraft = (q: DraftQuestion): Draft => ({ ...q, correct_indexes: q.correct_indexes ?? [], key: `q${++keySeq}`, timeText: formatTime(q.at_s) })
+const toNote = (at_s: number, body = ''): DraftNote => ({ key: `n${++keySeq}`, at_s, timeText: formatTime(at_s), body })
 
 export function LessonBuilder() {
   const { id } = useParams()
@@ -41,6 +42,8 @@ export function LessonBuilder() {
   const copyId = isNew ? searchParams.get('copy') : null
   const [fullscreen, setFullscreen] = useState(true)
   const [aiGrade, setAiGrade] = useState(false)
+  const [showFeedback, setShowFeedback] = useState(true)
+  const [notes, setNotes] = useState<DraftNote[]>([])
   const [questions, setQuestions] = useState<Draft[]>([])
   // How the questions got here. Only recorded for analytics; imported lessons are ordinary lessons.
   const [source, setSource] = useState<'manual' | 'bulk_paste' | 'edpuzzle' | 'ai'>('manual')
@@ -65,7 +68,7 @@ export function LessonBuilder() {
     let active = true
     ;(async () => {
       let query = supabase.from('lessons')
-        .select('id, shared, title, subject, class_id, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, position, rubric), assignments(class_id)')
+        .select('id, shared, title, subject, class_id, show_feedback, youtube_id, duration_s, require_fullscreen, ai_grade_short, questions(id, at_s, kind, prompt, choices, correct_index, correct_indexes, position, rubric), lesson_notes(id, at_s, body, position), assignments(class_id)')
         .eq('id', copyId || id)
       if (copyId) query = query.eq('shared', true)
       const { data, error } = await query.single()
@@ -88,10 +91,16 @@ export function LessonBuilder() {
       setDuration(Number(data.duration_s))
       setFullscreen(data.require_fullscreen)
       setAiGrade(data.ai_grade_short)
+      setShowFeedback(data.show_feedback ?? true)
+      setNotes(
+        [...((data.lesson_notes ?? []) as { at_s: number; body: string; position: number }[])]
+          .sort((a, b) => Number(a.at_s) - Number(b.at_s) || a.position - b.position)
+          .map((n) => toNote(Number(n.at_s), n.body)),
+      )
       const qs = [...(data.questions as (DraftQuestion & { id: string; position: number })[])].sort(
         (a, b) => a.at_s - b.at_s || a.position - b.position,
       )
-      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+      setQuestions(qs.map((q) => toDraft({ ...q, id: copyId ? undefined : q.id, at_s: Number(q.at_s), choices: q.choices ?? [], correct_indexes: q.correct_indexes ?? [] })))
     })()
     return () => { active = false }
   }, [id, copyId])
@@ -193,7 +202,7 @@ export function LessonBuilder() {
 
   const now = () => Math.floor(player.current?.getCurrentTime() ?? 0)
 
-  const addQuestion = (kind: 'mc' | 'short') => {
+  const addQuestion = (kind: DraftQuestion['kind']) => {
     player.current?.pauseVideo()
     const q = toDraft(blankQuestion(kind, now()))
     setQuestions((qs) => [...qs, q].sort((a, b) => a.at_s - b.at_s))
@@ -211,6 +220,22 @@ export function LessonBuilder() {
   }
 
   const sortByTime = () => setQuestions((qs) => [...qs].sort((a, b) => a.at_s - b.at_s))
+
+  // ---- notes (beta item 8): text the player pauses on. Never graded.
+  const addNote = () => {
+    player.current?.pauseVideo()
+    setNotes((ns) => [...ns, toNote(now())].sort((a, b) => a.at_s - b.at_s))
+    touch()
+  }
+  const updateNote = (key: string, patch: Partial<DraftNote>) => {
+    setNotes((ns) => ns.map((n) => (n.key === key ? { ...n, ...patch } : n)))
+    touch()
+  }
+  const removeNote = (key: string) => {
+    setNotes((ns) => ns.filter((n) => n.key !== key))
+    touch()
+  }
+  const sortNotes = () => setNotes((ns) => [...ns].sort((a, b) => a.at_s - b.at_s))
 
   // ---- bulk paste
   const [bulkText, setBulkText] = useState('')
@@ -261,8 +286,15 @@ export function LessonBuilder() {
       if (parseTime(q.timeText) === null) out.push(`${n}: the time should look like 1:30.`)
       else if (duration && q.at_s > duration) out.push(`${n}: ${formatTime(q.at_s)} is past the end of the video (${formatTime(duration)}).`)
       if (!q.prompt.trim()) out.push(`${n}: write the question.`)
-      if (q.kind === 'mc' && q.choices.some((c) => !c.trim())) out.push(`${n}: fill in every choice or remove the empty ones.`)
+      if (q.kind !== 'short' && q.choices.some((c) => !c.trim())) out.push(`${n}: fill in every choice or remove the empty ones.`)
       if (q.kind === 'mc' && q.correct_index === null) out.push(`${n}: pick the right answer with the circle.`)
+      if (q.kind === 'multi' && !(q.correct_indexes ?? []).length) out.push(`${n}: tick every right answer.`)
+    })
+    notes.forEach((nt, i) => {
+      const n = `Note ${i + 1}`
+      if (parseTime(nt.timeText) === null) out.push(`${n}: the time should look like 1:30.`)
+      else if (duration && nt.at_s > duration) out.push(`${n}: ${formatTime(nt.at_s)} is past the end of the video.`)
+      if (!nt.body.trim()) out.push(`${n}: write the note or delete it.`)
     })
     return out
   }
@@ -283,7 +315,9 @@ export function LessonBuilder() {
         duration_s: duration,
         require_fullscreen: fullscreen,
         ai_grade_short: aiGrade,
+        show_feedback: showFeedback,
         source,
+        notes: [...notes].sort((a, b) => a.at_s - b.at_s).map((n) => ({ at_s: n.at_s, body: n.body.trim() })),
       },
       p_questions: [...questions]
         .sort((a, b) => a.at_s - b.at_s)
@@ -292,8 +326,9 @@ export function LessonBuilder() {
           at_s: q.at_s,
           kind: q.kind,
           prompt: q.prompt.trim(),
-          choices: q.kind === 'mc' ? q.choices.map((c) => c.trim()) : null,
+          choices: q.kind !== 'short' ? q.choices.map((c) => c.trim()) : null,
           correct_index: q.kind === 'mc' ? q.correct_index : null,
+          correct_indexes: q.kind === 'multi' ? q.correct_indexes : null,
           rubric: q.kind === 'short' ? (q.rubric ?? '').trim() : '',
         })),
     })
@@ -312,7 +347,7 @@ export function LessonBuilder() {
     const readIds = () =>
       supabase
         .from('questions')
-        .select('id, at_s, kind, prompt, choices, correct_index, rubric')
+        .select('id, at_s, kind, prompt, choices, correct_index, correct_indexes, rubric')
         .eq('lesson_id', id)
         .order('at_s')
         .order('position')
@@ -328,7 +363,7 @@ export function LessonBuilder() {
       // and leave the lesson marked unsaved rather than overwrite them with the server copy.
       return setStatus({ kind: 'error', text: 'Saved, but you changed something while it was saving. Save again to keep those changes.' })
     }
-    setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+    setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [], correct_indexes: q.correct_indexes ?? [] })))
     setDirty(false)
     setStatus({ kind: 'ok', text: 'Saved.' })
   }
@@ -433,6 +468,10 @@ export function LessonBuilder() {
             <input type="checkbox" checked={aiGrade} onChange={(e) => { setAiGrade(e.target.checked); touch() }} />
             Suggest grades for short answers with AI (you can always change them)
           </label>
+          <label className="check">
+            <input type="checkbox" checked={showFeedback} onChange={(e) => { setShowFeedback(e.target.checked); touch() }} />
+            Tell students right away if a choice answer was right (turn off for a quiz: classmates could share answers)
+          </label>
         </div>
       </section>
 
@@ -441,7 +480,9 @@ export function LessonBuilder() {
           <h2>Questions <span className="count">{questions.length}</span></h2>
           <span className="row">
             <button onClick={() => addQuestion('mc')} disabled={!duration}>+ Multiple choice here</button>
+            <button onClick={() => addQuestion('multi')} disabled={!duration}>+ Multi-select here</button>
             <button onClick={() => addQuestion('short')} disabled={!duration}>+ Short answer here</button>
+            <button onClick={addNote} disabled={!duration}>+ Note here</button>
           </span>
         </div>
         <p className="muted small">Pause the video where you want a question, then add it. Students can't skip past a question until they answer it.</p>
@@ -479,11 +520,12 @@ export function LessonBuilder() {
                   aria-label="Question type"
                   value={q.kind}
                   onChange={(e) => {
-                    const kind = e.target.value as 'mc' | 'short'
+                    const kind = e.target.value as DraftQuestion['kind']
                     update(q.key, switchKind(q, kind))
                   }}
                 >
                   <option value="mc">Multiple choice</option>
+                  <option value="multi">Multi-select</option>
                   <option value="short">Short answer</option>
                 </select>
                 <button className="small danger" onClick={() => remove(q.key)}>Delete</button>
@@ -496,30 +538,77 @@ export function LessonBuilder() {
                     placeholder="e.g. Mitochondria make energy (ATP) for the cell. Accept any answer that mentions energy." />
                 </label>
               )}
-              {q.kind === 'mc' && (
+              {q.kind !== 'short' && (
                 <div className="stack">
                   {q.choices.map((c, ci) => (
                     <div key={ci} className="row">
-                      <input type="radio" name={`correct-${q.key}`} aria-label={`Choice ${ci + 1} is correct`} checked={q.correct_index === ci} onChange={() => update(q.key, { correct_index: ci })} />
+                      {q.kind === 'mc' ? (
+                        <input type="radio" name={`correct-${q.key}`} aria-label={`Choice ${ci + 1} is correct`} checked={q.correct_index === ci} onChange={() => update(q.key, { correct_index: ci })} />
+                      ) : (
+                        <input
+                          type="checkbox"
+                          aria-label={`Choice ${ci + 1} is correct`}
+                          checked={(q.correct_indexes ?? []).includes(ci)}
+                          onChange={(e) => {
+                            const set = new Set(q.correct_indexes ?? [])
+                            if (e.target.checked) set.add(ci)
+                            else set.delete(ci)
+                            update(q.key, { correct_indexes: [...set].sort((a, b) => a - b) })
+                          }}
+                        />
+                      )}
                       <input className="text grow" value={c} onChange={(e) => update(q.key, { choices: q.choices.map((x, j) => (j === ci ? e.target.value : x)) })} placeholder={`Choice ${String.fromCharCode(65 + ci)}`} />
                       {q.choices.length > 2 && (
-                        <button className="small" aria-label="Remove choice" onClick={() => {
-                          const choices = q.choices.filter((_, j) => j !== ci)
-                          // Removing the right answer must not silently make choice A right (on an assigned
-                          // lesson that would re-grade every student on save). Make the teacher pick again.
-                          const ki = q.correct_index
-                          update(q.key, { choices, correct_index: ki === null || ki === ci ? null : ki > ci ? ki - 1 : ki })
-                        }}>✕</button>
+                        // Removing a right answer never silently makes another choice right (on an assigned lesson that
+                        // would re-grade every student on save). The teacher picks again.
+                        <button className="small" aria-label="Remove choice" onClick={() => update(q.key, removeChoice(q, ci))}>✕</button>
                       )}
                     </div>
                   ))}
                   {q.choices.length < 6 && <button className="small" onClick={() => update(q.key, { choices: [...q.choices, ''] })}>+ Add choice</button>}
-                  <p className={q.correct_index === null ? 'error small' : 'muted small'}>Pick the right answer with the circle.</p>
+                  {q.kind === 'mc' ? (
+                    <p className={q.correct_index === null ? 'error small' : 'muted small'}>Pick the right answer with the circle.</p>
+                  ) : (
+                    <p className={(q.correct_indexes ?? []).length ? 'muted small' : 'error small'}>
+                      Tick every right answer. Students get it right only if they pick exactly these.
+                    </p>
+                  )}
                 </div>
               )}
             </li>
           ))}
         </ol>
+
+        {notes.length > 0 && (
+          <section aria-labelledby="notes-h" className="stack">
+            <h3 id="notes-h">Notes <span className="muted small">The video pauses to show each one. Not graded.</span></h3>
+            <ol className="cards">
+              {notes.map((n, i) => (
+                <li key={n.key} className="card stack">
+                  <div className="row">
+                    <strong>Note {i + 1}</strong>
+                    <input
+                      aria-label="Note time"
+                      className="text time"
+                      value={n.timeText}
+                      onChange={(e) => {
+                        const t = parseTime(e.target.value)
+                        updateNote(n.key, { timeText: e.target.value, ...(t !== null ? { at_s: t } : {}) })
+                      }}
+                      onBlur={sortNotes}
+                    />
+                    <button className="small" onClick={() => { const t = now(); updateNote(n.key, { at_s: t, timeText: formatTime(t) }); sortNotes() }}>
+                      Use current time
+                    </button>
+                    <button className="small danger" onClick={() => removeNote(n.key)}>Delete</button>
+                  </div>
+                  <textarea aria-label="Note" rows={2} maxLength={1000} value={n.body} onChange={(e) => updateNote(n.key, { body: e.target.value })}
+                    placeholder="e.g. Look at the graph: we'll use it in class tomorrow." />
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
 
 
         <details className="card">

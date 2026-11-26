@@ -34,6 +34,7 @@ export async function draftQuestionsWithAi(req: {
     prompt: q.prompt,
     choices: q.choices ?? [],
     correct_index: q.kind === 'mc' ? q.correct_index : null,
+    correct_indexes: q.kind === 'multi' ? (q.correct_indexes ?? []) : [],
     rubric: q.kind === 'short' ? (q.rubric ?? '') : '',
   }))
   return { ...data, questions }

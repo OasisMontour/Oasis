@@ -91,6 +91,9 @@ export function AiDraftPanel({
             <input type="checkbox" checked={kinds.has('mc')} onChange={() => toggle('mc')} disabled={busy} /> Multiple choice
           </label>
           <label className="check">
+            <input type="checkbox" checked={kinds.has('multi')} onChange={() => toggle('multi')} disabled={busy} /> Multi-select
+          </label>
+          <label className="check">
             <input type="checkbox" checked={kinds.has('short')} onChange={() => toggle('short')} disabled={busy} /> Short answer
           </label>
         </div>

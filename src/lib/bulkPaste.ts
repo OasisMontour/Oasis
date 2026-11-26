@@ -3,10 +3,12 @@ import { parseTime } from './time'
 export type DraftQuestion = {
   id?: string // set for questions already saved
   at_s: number
-  kind: 'mc' | 'short'
+  kind: 'mc' | 'short' | 'multi'
   prompt: string
   choices: string[] // empty for short answer
-  correct_index: number | null
+  correct_index: number | null // mc only
+  /** Multi-select only: every right choice. Students must pick exactly these. */
+  correct_indexes?: number[]
   /** Short answers only: what the teacher expects. Used by AI grading, never shown to students. */
   rubric?: string
 }
