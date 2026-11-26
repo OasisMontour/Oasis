@@ -31,6 +31,7 @@ import {
 } from '../lib/studentApi'
 import { formatTime } from '../lib/time'
 import { loadYouTubeApi, YT_STATE, type YTPlayer } from '../lib/youtube'
+import { readPrefs } from '../lib/studentPrefs'
 import '../student.css'
 
 const POLL_MS = 250
@@ -385,6 +386,8 @@ export function StudentPlayer() {
             modestbranding: 1,
             iv_load_policy: 3,
             start: Math.floor(lesson.last_pos_s),
+            // Student setting: captions on by default when the video has them.
+            ...(readPrefs().captions ? { cc_load_policy: 1 } : {}),
             origin: window.location.origin,
           },
           events: {

@@ -9,7 +9,7 @@ export async function listMyAssignments(): Promise<{ rows: StudentAssignmentRow[
   const [a, e] = await Promise.all([
     supabase
       .from('assignments')
-      .select('id, due_at, created_at, lessons(title, duration_s, youtube_id), classes(name), attempts(max_watched_s, finished_at)')
+      .select('id, class_id, due_at, created_at, lessons(title, duration_s, youtube_id), classes(name), attempts(max_watched_s, finished_at)')
       .order('created_at', { ascending: false }),
     supabase.from('enrollments').select('class_id', { count: 'exact', head: true }),
   ])
@@ -79,4 +79,16 @@ export async function sendFocusEvent(attemptId: string, kind: FocusKind, videoS:
 export async function recheckEnrollment(assignmentId: string): Promise<boolean> {
   const { data } = await invokeFn<{ ok: boolean; enrolled?: boolean }>('classroom', { action: 'student_recheck', assignment_id: assignmentId })
   return data?.ok === true && data.enrolled === true
+}
+
+export type MyClass = { id: string; name: string }
+
+/** The classes this student is enrolled in (from their teachers' Google Classroom rosters). */
+export async function listMyClasses(): Promise<MyClass[]> {
+  const { data, error } = await supabase.from('enrollments').select('classes(id, name)')
+  if (error) throw error
+  return ((data ?? []) as unknown as { classes: MyClass | null }[])
+    .map((e) => e.classes)
+    .filter((c): c is MyClass => !!c)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

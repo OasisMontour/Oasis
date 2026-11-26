@@ -146,6 +146,7 @@ export type StudentAssignmentRow = {
   due_at: string | null
   created_at: string
   lessons: { title: string; duration_s: number; youtube_id: string } | null
+  class_id?: string
   classes: { name: string } | null
   attempts: { max_watched_s: number; finished_at: string | null }[] | null
 }

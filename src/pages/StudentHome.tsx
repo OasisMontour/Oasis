@@ -6,13 +6,12 @@ import { supabase } from '../lib/supabase'
 import { REMOVED_TEXT, type MyRequest } from '../lib/teacherSignup'
 import { assignmentStatus, dueLabel, progressPct, splitAssignments, type StudentAssignmentRow } from '../lib/player'
 import { formatTime } from '../lib/time'
-import '../student.css'
-import Brand from '../components/Brand'
+import { StudentShell } from '../components/StudentShell'
 
 // Most students arrive straight from the Classroom link and never see this. It's a to-do list.
 // Classes come from the teacher's Google Classroom roster, so there's nothing to join.
 export function StudentHome() {
-  const { profile, isAdmin, signOut } = useAuth()
+  const { profile, signOut } = useAuth()
   const [rows, setRows] = useState<StudentAssignmentRow[] | null>(null)
   const [classCount, setClassCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -42,23 +41,7 @@ export function StudentHome() {
   const { todo, done } = splitAssignments(rows ?? [])
 
   return (
-    <div className="student-home">
-      <header className="s-top">
-        <Brand />
-        <span className="s-muted">{profile?.email}</span>
-        <Link className="s-btn ghost" to="/report?from=%2Fstudent">
-          Report a bug
-        </Link>
-        {isAdmin && (
-          <Link className="s-btn ghost" to="/admin">
-            Admin
-          </Link>
-        )}
-        <button className="s-btn ghost" onClick={signOut}>
-          Sign out
-        </button>
-      </header>
-      <main className="s-main">
+    <StudentShell>
         <h1>Hi, {profile?.name?.split(' ')[0] || 'there'}</h1>
 
         {removed && (
@@ -90,8 +73,8 @@ export function StudentHome() {
           <div className="s-empty">
             <h2>No classes found</h2>
             <p>
-              You're signed in as <b>{profile?.email}</b>. Oasis didn't find any classes for this account. If that's a personal
-              Gmail, sign out and use your school account.
+              Oasis didn't find any classes for this account. If you signed in with a personal Gmail, sign out and use your school
+              account. <Link to="/student/settings">Settings</Link> shows which account you're using.
             </p>
             <p>If it is your school account, your teacher may not have synced their Google Classroom yet. Check back later.</p>
             <button className="s-btn primary" onClick={signOut}>
@@ -129,12 +112,11 @@ export function StudentHome() {
             )}
           </>
         )}
-      </main>
-    </div>
+    </StudentShell>
   )
 }
 
-function AssignmentRow({ a }: { a: StudentAssignmentRow }) {
+export function AssignmentRow({ a }: { a: StudentAssignmentRow }) {
   const status = assignmentStatus(a)
   const due = status === 'done' ? null : dueLabel(a.due_at)
   const pct = progressPct(a)
