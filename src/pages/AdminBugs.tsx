@@ -42,16 +42,20 @@ export function AdminBugs({ onError }: { onError: (msg: string) => void }) {
         </span>
       </div>
       {bugs && open.length === 0 && <p className="muted">No open reports.</p>}
-      <ul className="cards">
-        {[...(expanded ? open : []), ...(showClosed ? closed : [])].map((b) => (
-          <BugCard key={b.id} bug={b} onSaved={load} onError={onError} />
+      {/* Collapsed cards are hidden, not unmounted, so an unsaved fix note survives Hide/Show (audit #28). */}
+      <ul className="cards" hidden={!(expanded && open.length) && !(showClosed && closed.length)}>
+        {open.map((b) => (
+          <BugCard key={b.id} bug={b} hidden={!expanded} onSaved={load} onError={onError} />
+        ))}
+        {closed.map((b) => (
+          <BugCard key={b.id} bug={b} hidden={!showClosed} onSaved={load} onError={onError} />
         ))}
       </ul>
     </section>
   )
 }
 
-function BugCard({ bug, onSaved, onError }: { bug: AdminBug; onSaved: () => void; onError: (m: string) => void }) {
+function BugCard({ bug, hidden, onSaved, onError }: { bug: AdminBug; hidden: boolean; onSaved: () => void; onError: (m: string) => void }) {
   const [severity, setSeverity] = useState(bug.severity)
   const [status, setStatus] = useState(bug.status)
   const [note, setNote] = useState(bug.fix_note)
@@ -67,7 +71,7 @@ function BugCard({ bug, onSaved, onError }: { bug: AdminBug; onSaved: () => void
   }
 
   return (
-    <li className={`card bug sev-${bug.severity}`}>
+    <li className={`card bug sev-${bug.severity}`} hidden={hidden}>
       <div className="qhead">
         <span className="row">
           <span className={`tag sev ${bug.severity}`}>{bug.severity}</span>

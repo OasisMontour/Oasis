@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { supabase } from '../lib/supabase'
 import type { ChangelogEntry } from '../lib/bugs'
@@ -7,7 +7,12 @@ import Brand from '../components/Brand'
 
 // Fixes the team has published. Only the fix note is shown, never the original report.
 export function Changelog() {
-  const { profile } = useAuth()
+  const { profile, isAdmin } = useAuth()
+  const navigate = useNavigate()
+  // Back means back: an admin who came from /admin returns there, not to /student (audit #2).
+  // React Router keeps an index in history.state; 0 means this tab opened straight onto the changelog.
+  const canGoBack = ((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0
+  const home = profile?.role === 'teacher' ? '/teacher' : '/student'
   const [entries, setEntries] = useState<ChangelogEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -22,7 +27,12 @@ export function Changelog() {
       <header className="bar">
         <Brand />
         <Link to="/report">Report a bug</Link>
-        <Link className="button" to={profile?.role === 'teacher' ? '/teacher' : '/student'}>Back</Link>
+        {isAdmin && <Link to="/admin">Admin</Link>}
+        {canGoBack ? (
+          <button onClick={() => navigate(-1)}>Back</button>
+        ) : (
+          <Link className="button" to={home}>Back</Link>
+        )}
       </header>
       <h1>What we fixed</h1>
       {error && <p className="error" role="alert">{error}</p>}

@@ -6,22 +6,38 @@ import { supabase } from './supabase'
 export function startUsageTracking(userId: string): () => void {
   const key = `oasis.visit.${userId}`
   // supabase.rpc() is lazy: the request only goes out once it's awaited or .then()'d.
-  const send = (visit: boolean) => {
-    supabase.rpc('track_usage', { p_visit: visit }).then(
-      () => {},
-      () => {},
+  const send = (visit: boolean): Promise<boolean> =>
+    Promise.resolve(supabase.rpc('track_usage', { p_visit: visit })).then(
+      (r) => !r.error,
+      () => false,
     )
-  }
-  try {
-    if (!sessionStorage.getItem(key)) {
-      sessionStorage.setItem(key, '1')
-      send(true)
+  const counted = () => {
+    try {
+      return !!sessionStorage.getItem(key)
+    } catch {
+      return true // storage blocked: skip the visit count, heartbeats still work
     }
-  } catch {
-    // storage blocked: skip the visit count, heartbeats still work
   }
+  let visiting = false
+  // Mark the visit counted only once the server took it; until then a heartbeat carries it (audit #31).
+  const sendVisitOrBeat = () => {
+    if (counted() || visiting) return send(false)
+    visiting = true
+    return send(true).then((ok) => {
+      visiting = false
+      if (ok) {
+        try {
+          sessionStorage.setItem(key, '1')
+        } catch {
+          /* storage blocked */
+        }
+      }
+      return ok
+    })
+  }
+  void sendVisitOrBeat()
   const beat = () => {
-    if (document.visibilityState === 'visible') send(false)
+    if (document.visibilityState === 'visible') void sendVisitOrBeat()
   }
   const id = window.setInterval(beat, 30_000)
   document.addEventListener('visibilitychange', beat)

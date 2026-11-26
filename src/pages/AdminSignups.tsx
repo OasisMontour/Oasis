@@ -25,16 +25,20 @@ export function AdminSignups({
     setBusy(true)
     const { error } = await supabase.rpc(fn, args)
     setBusy(false)
-    if (error) return onError(error.message)
+    if (error) {
+      onError(error.message)
+      return false
+    }
     await onChange(ok)
+    return true
   }
 
   const addDomain = async (e: FormEvent) => {
     e.preventDefault()
     if (!looksLikeDomain(domain)) return onError('That doesn’t look like a domain (e.g. district.k12.pa.us).')
     const d = domain.trim().replace(/^@/, '').toLowerCase()
-    setDomain('')
-    await run('admin_add_domain', { p_domain: d }, `${d} added. Sign-ups from ${d} accounts will be marked as from a trusted school.`)
+    // Clear only once it's saved, so a failed add can be retried (audit #29).
+    if (await run('admin_add_domain', { p_domain: d }, `${d} added. Sign-ups from ${d} accounts will be marked as from a trusted school.`)) setDomain('')
   }
 
   if (part === 'waiting')
