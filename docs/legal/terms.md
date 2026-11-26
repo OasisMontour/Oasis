@@ -66,4 +66,4 @@ These terms are governed by the laws of Pennsylvania. If there's a disagreement,
 
 ## 11. Contact
 
-{{OPERATOR}} · {{MAILING_ADDRESS}} · {{CONTACT_EMAIL}}
+{{OPERATOR}} · {{CONTACT_EMAIL}}
