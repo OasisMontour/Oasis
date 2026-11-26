@@ -84,20 +84,72 @@ export type Tick = {
   question: PlayerQuestion | null
 }
 
+/**
+ * Most real time a single tick may account for. A busy Chromebook can skip a few 250ms ticks, and the
+ * video keeps playing meanwhile (audit #16); beyond this we'd rather snap back than allow a seek.
+ */
+export const MAX_TICK_GAP_S = 5
+
+/** How far past maxWatched the playhead may be on this tick: the base tolerance plus 1x playback for the time since the last tick. */
+export function skipAllowance(elapsedS = 0): number {
+  const gap = Number.isFinite(elapsedS) && elapsedS > 0 ? Math.min(elapsedS, MAX_TICK_GAP_S) : 0
+  return SKIP_TOLERANCE_S + gap
+}
+
 export function tick(opts: {
   current: number
   maxWatched: number
   durationS: number
   questions: PlayerQuestion[]
   answered: ReadonlySet<string>
+  /** Seconds since the previous tick. Normal playback advances by this much; a missed tick isn't a skip. */
+  elapsedS?: number
 }): Tick {
   const { current, maxWatched, durationS, questions, answered } = opts
   if (!Number.isFinite(current)) return { maxWatched, snapBack: false, question: null }
-  if (current > maxWatched + SKIP_TOLERANCE_S) return { maxWatched, snapBack: true, question: null }
+  if (current > maxWatched + skipAllowance(opts.elapsedS)) return { maxWatched, snapBack: true, question: null }
   const gate = nextUnanswered(questions, answered)
   const cap = Math.min(durationS, gate ? gate.at_s : Infinity)
   const next = Math.max(maxWatched, Math.min(current, cap))
   return { maxWatched: next, snapBack: false, question: dueQuestion(questions, answered, Math.max(current, next)) }
+}
+
+/**
+ * YouTube said the video ended. Unless it got there by a skip, the student reached the end: if a
+ * question sits right at the end it's shown first, and the caller marks the video ended BEFORE showing
+ * it so answering finishes the lesson rather than replaying (audit #14). With a question pending,
+ * maxWatched stays at its gate (save_progress won't accept more until it's answered).
+ */
+export function onVideoEnded(opts: {
+  current: number
+  maxWatched: number
+  durationS: number
+  questions: PlayerQuestion[]
+  answered: ReadonlySet<string>
+}): Tick {
+  const r = tick(opts)
+  if (r.snapBack) return r
+  if (r.question) return r
+  const pending = nextUnanswered(opts.questions, opts.answered)
+  if (pending && pending.at_s <= r.maxWatched + SKIP_TOLERANCE_S) return { ...r, question: pending }
+  return { maxWatched: pending ? r.maxWatched : opts.durationS, snapBack: false, question: null }
+}
+
+/**
+ * Once the video has ended and every question is answered, the student has watched to the end even if
+ * the last gate held maxWatched a little short of the stored length.
+ */
+export function maxWatchedAfterEnd(maxWatched: number, durationS: number, questions: PlayerQuestion[], answered: ReadonlySet<string>): number {
+  return nextUnanswered(questions, answered) ? maxWatched : Math.max(maxWatched, durationS)
+}
+
+/**
+ * The resume point to save. Until the player is playing, it reports 0 (it hasn't been seeked to the
+ * resume point yet), so use the last position we trust instead of wiping it (audit #15).
+ */
+export function positionToSave(playerTime: number | null | undefined, lastKnown: number, maxWatchedToSave: number, durationS: number): number {
+  const t = typeof playerTime === 'number' && Number.isFinite(playerTime) ? playerTime : lastKnown
+  return Math.min(progressToSave(t, durationS), maxWatchedToSave)
 }
 
 /** The value to send to save_progress: never NaN, never past the stored length (YouTube's can be a hair longer). */
