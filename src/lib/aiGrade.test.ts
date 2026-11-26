@@ -9,7 +9,7 @@ describe('runAiGrading', () => {
       .mockResolvedValueOnce(batch({ graded: 6, unsure: 2, remaining: 5 }))
       .mockResolvedValueOnce(batch({ graded: 4, skipped: 1, remaining: 0 }))
     const progress = vi.fn()
-    expect(await runAiGrading(call, progress)).toEqual({ graded: 10, unsure: 2, skipped: 1, unavailable: 0, stoppedBy: null })
+    expect(await runAiGrading(call, progress)).toEqual({ graded: 10, unsure: 2, skipped: 1, unavailable: 0, stoppedBy: null, remaining: 0 })
     expect(call).toHaveBeenCalledTimes(2)
     expect(progress).toHaveBeenCalledTimes(2)
   })
@@ -25,6 +25,23 @@ describe('runAiGrading', () => {
     const call = vi.fn(async () => batch({ graded: 1, remaining: 1 }))
     await runAiGrading(call)
     expect(call).toHaveBeenCalledTimes(25)
+  })
+  it('says how many are left when it hits the batch limit (audit #23)', async () => {
+    let left = 208
+    const call = vi.fn(async () => {
+      left -= 8
+      return batch({ graded: 8, remaining: left })
+    })
+    const run = await runAiGrading(call)
+    expect(run).toMatchObject({ graded: 200, remaining: 8, stoppedBy: 'batch_limit' })
+    const msg = aiRunMessage(run)
+    expect(msg.text).toMatch(/8 answers are still waiting.*Click Grade with AI again/)
+    expect(msg.isError).toBe(false)
+  })
+  it('finishing exactly on the last batch is not a stop', async () => {
+    let left = 200
+    const run = await runAiGrading(async () => batch({ graded: 8, remaining: (left -= 8) }))
+    expect(run.stoppedBy).toBeNull()
   })
 })
 

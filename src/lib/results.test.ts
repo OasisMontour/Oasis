@@ -19,9 +19,10 @@ const students: ResultStudent[] = [
 ]
 
 describe('summarize', () => {
-  it('counts statuses, averages finished scores only, and counts ungraded short answers', () => {
+  it('counts statuses, averages fully graded finished scores only, and counts ungraded short answers', () => {
+    // bo finished with a short answer still ungraded: left out of the average (audit #24).
     expect(summarize(students, questions)).toEqual({
-      total: 4, finished: 2, in_progress: 1, not_started: 0, not_signed_in: 1, average: 75, needsGrading: 1, leftTab: 1,
+      total: 4, finished: 2, in_progress: 1, not_started: 0, not_signed_in: 1, average: 100, averageExcluded: 1, needsGrading: 1, leftTab: 1,
     })
   })
 
@@ -113,5 +114,23 @@ describe('AI grading helpers', () => {
   })
   it('CSV says which grades came from AI', () => {
     expect(buildCsv({ questions: qs, students: [st[1]] })).toContain('c (correct, by AI)')
+  })
+})
+
+describe('grade export/send guard (audit #20, #21)', () => {
+  it('blocks while a grade save or AI batch is pending', async () => {
+    const { gradesBusy } = await import('./results')
+    expect(gradesBusy(1, false)).toMatch(/Saving grades/)
+    expect(gradesBusy(0, true)).toMatch(/AI grading/)
+    expect(gradesBusy(0, false)).toBeNull()
+  })
+})
+
+describe('averageHint (audit #24)', () => {
+  it('says when finished students were left out', async () => {
+    const { averageHint } = await import('./results')
+    expect(averageHint({ average: 100, averageExcluded: 1, finished: 2 })).toMatch(/1 still to grade/)
+    expect(averageHint({ average: null, averageExcluded: 2, finished: 2 })).toBe('2 still to grade')
+    expect(averageHint({ average: 80, averageExcluded: 0, finished: 3 })).toBe('finished students')
   })
 })
