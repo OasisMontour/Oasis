@@ -6,11 +6,18 @@ name: Deploy Vercel
 # then save the URL as the repo secret VERCEL_DEPLOY_HOOK. Without the secret this does nothing.
 
 on:
+  # Frontend-only merges deploy right away. Merges that touch supabase/ wait for
+  # "Deploy Supabase" to finish first, so the site never asks for a column the DB lacks.
   push:
+    branches: [main]
+  workflow_run:
+    workflows: [Deploy Supabase]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: deploy-vercel
@@ -19,8 +26,24 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+      - name: Leave backend merges to Deploy Supabase
+        id: gate
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null | grep -q '^supabase/'; then
+            echo "This merge changes supabase/, so Vercel deploys after Deploy Supabase finishes."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Trigger Vercel production build
+        if: steps.gate.outputs.skip != 'true'
         env:
           HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
         run: |
