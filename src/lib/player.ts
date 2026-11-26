@@ -5,7 +5,7 @@
 export type PlayerQuestion = {
   id: string
   at_s: number
-  kind: 'mc' | 'short'
+  kind: 'mc' | 'short' | 'multi'
   answered: boolean
   /**
    * Locked questions come without prompt/choices: the server only reveals a question once the student has
@@ -16,12 +16,34 @@ export type PlayerQuestion = {
   choices?: string[] | null
 }
 
+export type PlayerNote = { id: string; at_s: number; body: string }
+
+/** What submit_answer says about the answer just locked in. 'submitted' = no right/wrong to show. */
+export type AnswerResult = 'correct' | 'incorrect' | 'submitted'
+
+/**
+ * The note to pause for now, if any: one the playhead just reached (within the last 2s of play, so a resume or a
+ * seek back past it doesn't stop again), that hasn't been shown this visit.
+ */
+export function dueNote(notes: PlayerNote[] | undefined, seen: ReadonlySet<string>, current: number): PlayerNote | null {
+  return (notes ?? []).find((n) => !seen.has(n.id) && current >= n.at_s && current - n.at_s < 2) ?? null
+}
+
+/** Multi-select response as the server wants it: sorted, unique choice indexes, comma-separated. */
+export function multiResponse(picked: ReadonlySet<number>): string {
+  return [...picked].sort((a, b) => a - b).join(',')
+}
+
 export type StudentLesson = {
   attempt_id: string
   title: string
   youtube_id: string
   duration_s: number
   require_fullscreen: boolean
+  /** Show Correct / Incorrect after a choice answer is locked in (beta item 11). Missing on old servers = off. */
+  show_feedback?: boolean
+  /** Teacher notes at a timestamp (beta item 8): the player pauses to show them. Never graded. */
+  notes?: PlayerNote[]
   max_watched_s: number
   last_pos_s: number
   finished_at: string | null

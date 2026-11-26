@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { PlayerQuestion, StudentAssignmentRow, StudentLesson } from './player'
+import type { AnswerResult, PlayerQuestion, StudentAssignmentRow, StudentLesson } from './player'
 
 // Thin wrappers over the student RPCs (supabase/migrations/20261112000000_init.sql and later).
 // Every write goes through an RPC; RLS only lets students read their own rows.
@@ -27,6 +27,7 @@ export async function getStudentLesson(assignmentId: string): Promise<StudentLes
     max_watched_s: Number(l.max_watched_s),
     last_pos_s: Number(l.last_pos_s),
     questions: (l.questions ?? []).map((q) => ({ ...q, at_s: Number(q.at_s) })),
+    notes: (l.notes ?? []).map((n) => ({ ...n, at_s: Number(n.at_s) })),
   }
 }
 
@@ -49,9 +50,12 @@ export async function saveProgress(attemptId: string, maxWatched: number, lastPo
   if (error) throw error
 }
 
-export async function submitAnswer(attemptId: string, questionId: string, response: string): Promise<void> {
-  const { error } = await supabase.rpc('submit_answer', { p_attempt: attemptId, p_question: questionId, p_response: response })
+/** Locks in an answer. The server says whether it was right only for choice questions in lessons that show it. */
+export async function submitAnswer(attemptId: string, questionId: string, response: string): Promise<AnswerResult> {
+  const { data, error } = await supabase.rpc('submit_answer', { p_attempt: attemptId, p_question: questionId, p_response: response })
   if (error) throw error
+  const r = (data as { result?: string } | null)?.result
+  return r === 'correct' || r === 'incorrect' ? r : 'submitted'
 }
 
 export async function finishAttempt(attemptId: string): Promise<void> {

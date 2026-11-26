@@ -5,12 +5,16 @@ import { rememberNext } from '../lib/next'
 import {
   canFinish,
   classifyRpcError,
+  dueNote,
   dueQuestion,
+  multiResponse,
   needsReconnect,
   nextUnanswered,
   progressToSave,
   SKIP_TOLERANCE_S,
   tick,
+  type AnswerResult,
+  type PlayerNote,
   type PlayerQuestion,
   type StudentLesson,
 } from '../lib/player'
@@ -57,6 +61,7 @@ export function StudentPlayer() {
   const [className, setClassName] = useState<string | null>(null)
   const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set())
   const [question, setQuestion] = useState<PlayerQuestion | null>(null)
+  const [noteShown, setNoteShown] = useState<PlayerNote | null>(null)
   const [playerReady, setPlayerReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [current, setCurrent] = useState(0)
@@ -77,6 +82,8 @@ export function StudentPlayer() {
     lesson: null as StudentLesson | null,
     answered: new Set<string>() as ReadonlySet<string>,
     question: null as PlayerQuestion | null,
+    note: null as PlayerNote | null,
+    seenNotes: new Set<string>(),
     away: null as Away,
     reconnecting: false,
     maxWatched: 0,
@@ -262,6 +269,24 @@ export function StudentPlayer() {
     [save],
   )
 
+  // Teacher notes: pause, show, continue. Not graded, and the server never waits for them.
+  const showNote = useCallback(
+    (n: PlayerNote) => {
+      const s = m.current
+      s.seenNotes.add(n.id)
+      player.current?.pauseVideo()
+      s.note = n
+      setNoteShown(n)
+    },
+    [],
+  )
+  const closeNote = () => {
+    const s = m.current
+    s.note = null
+    setNoteShown(null)
+    if (!s.question && !s.away && !s.reconnecting && s.phase === 'playing') player.current?.playVideo()
+  }
+
   const finish = useCallback(async () => {
     const s = m.current
     const l = s.lesson
@@ -313,7 +338,7 @@ export function StudentPlayer() {
       const q = dueQuestion(l.questions, next, Math.max(now(), s.maxWatched))
       if (q) return showQuestion(q)
       if (s.ended) return maybeFinish()
-      if (!s.away && !s.reconnecting) player.current?.playVideo()
+      if (!s.away && !s.reconnecting && !s.note) player.current?.playVideo()
     },
     [showQuestion, maybeFinish, setAnsweredBoth],
   )
@@ -358,7 +383,7 @@ export function StudentPlayer() {
               if (e.data === YT_STATE.PLAYING) {
                 s.ended = false
                 // Something started the video while it should be held (a question, left fullscreen, Wi-Fi).
-                if (s.question || s.away || s.reconnecting || s.phase !== 'playing') player.current?.pauseVideo()
+                if (s.question || s.note || s.away || s.reconnecting || s.phase !== 'playing') player.current?.pauseVideo()
                 else setPlaying(true)
               } else if (e.data === YT_STATE.PAUSED) {
                 setPlaying(false)
@@ -435,6 +460,10 @@ export function StudentPlayer() {
       setCurrent(t)
       setMaxShown(r.maxWatched)
       if (r.question && !s.question) showQuestion(r.question)
+      else if (!s.question && !s.note) {
+        const n = dueNote(l.notes, s.seenNotes, t)
+        if (n) showNote(n)
+      }
       // Poll, don't just listen: listeners can be swallowed from the console, and a focused iframe
       // hides window blur. hasFocus() is true while focus is anywhere inside this page, iframe included.
       if (!s.away && !s.leaving) {
@@ -449,7 +478,7 @@ export function StudentPlayer() {
       }
     }, POLL_MS)
     return () => window.clearInterval(id)
-  }, [phase, playerReady, save, showQuestion, setReconnectingBoth, goAway])
+  }, [phase, playerReady, save, showQuestion, showNote, setReconnectingBoth, goAway])
 
   // Regular saves, plus fast retries while we're holding the video for Wi-Fi.
   useEffect(() => {
@@ -528,6 +557,7 @@ export function StudentPlayer() {
     await enterFullscreen()
     setPhaseBoth('playing')
     if (l.last_pos_s > 5) setNote(`Picking up at ${formatTime(l.last_pos_s)}.`)
+    for (const n of l.notes ?? []) if (n.at_s < l.last_pos_s - 0.5) m.current.seenNotes.add(n.id)
     player.current?.seekTo(l.last_pos_s, true)
     const q = dueQuestion(l.questions, m.current.answered, m.current.maxWatched)
     // Only questions at or before where they are now; later ones fire as the video reaches them.
@@ -541,12 +571,12 @@ export function StudentPlayer() {
     setResumeError(false)
     if (!(await flushLogs())) return setResumeError(true)
     setAwayBoth(null)
-    if (!m.current.question && !m.current.reconnecting) player.current?.playVideo()
+    if (!m.current.question && !m.current.note && !m.current.reconnecting) player.current?.playVideo()
   }
 
   const togglePlay = () => {
     const s = m.current
-    if (s.phase !== 'playing' || s.question || s.away || s.reconnecting) return
+    if (s.phase !== 'playing' || s.question || s.note || s.away || s.reconnecting) return
     setNote(null)
     if (playing) player.current?.pauseVideo()
     else if (s.ended) maybeFinish()
@@ -636,7 +666,7 @@ export function StudentPlayer() {
         </Link>
       </header>
 
-      <div className={`p-body${question ? ' with-panel' : ''}`}>
+      <div className={`p-body${question || noteShown ? ' with-panel' : ''}`}>
         <div className="p-stage">
           <div className="p-video" ref={mountRef} />
           {/* Clicks land here, not in YouTube's iframe: no window blur, no YouTube links, no scrubbing. */}
@@ -647,9 +677,9 @@ export function StudentPlayer() {
             onClick={togglePlay}
             disabled={phase !== 'playing'}
           />
-          {question && (
+          {(question || noteShown) && (
             <div className="p-paused">
-              <span>⏸ Paused for a question</span>
+              <span>{question ? '⏸ Paused for a question' : '⏸ Paused for a note from your teacher'}</span>
             </div>
           )}
           {phase === 'playing' && away && (
@@ -698,12 +728,24 @@ export function StudentPlayer() {
           )}
         </div>
 
+        {noteShown && !question && (
+          <aside className="p-panel" aria-labelledby="note-h">
+            <p className="p-qmeta">Note from your teacher · {formatTime(noteShown.at_s)}</p>
+            <h2 id="note-h" className="p-note-body">{noteShown.body}</h2>
+            <div className="p-submit">
+              <button className="s-btn primary big" onClick={closeNote} autoFocus>
+                Continue
+              </button>
+            </div>
+          </aside>
+        )}
         {question && l && (
           <QuestionPanel
             key={question.id}
             attemptId={l.attempt_id}
             q={question}
             number={qIndex}
+            showFeedback={l.show_feedback === true}
             ensureReached={async () => {
               if (m.current.confirmed + 1 < question.at_s) await save()
             }}
@@ -716,7 +758,7 @@ export function StudentPlayer() {
 
       <footer className="p-bottom">
         <div className="p-controls">
-          <button className="p-ctl" onClick={togglePlay} disabled={phase !== 'playing' || !!question || !!away || reconnecting} aria-label={playing ? 'Pause' : 'Play'}>
+          <button className="p-ctl" onClick={togglePlay} disabled={phase !== 'playing' || !!question || !!noteShown || !!away || reconnecting} aria-label={playing ? 'Pause' : 'Play'}>
             {playing ? '❚❚' : '▶'}
           </button>
           <button className="p-ctl" onClick={back10} disabled={phase !== 'playing' || !!question} aria-label="Back 10 seconds">
@@ -781,16 +823,22 @@ function QuestionPanel(props: {
   attemptId: string
   q: PlayerQuestion
   number: number
+  /** Show Correct / Incorrect before playback resumes (the lesson's setting). */
+  showFeedback: boolean
   ensureReached: () => Promise<void>
   onDone: () => void
   onRejected: () => Promise<void>
   /** The server says this student isn't in the class any more (taken off the Classroom roster mid-lesson). */
   onNotAssigned: () => void
 }) {
-  const { attemptId, number, ensureReached, onDone, onRejected, onNotAssigned } = props
+  const { attemptId, number, showFeedback, ensureReached, onDone, onRejected, onNotAssigned } = props
   const [q, setQ] = useState<PlayerQuestion | null>(props.q.locked || props.q.prompt === undefined ? null : props.q)
   const [revealTry, setRevealTry] = useState(0)
   const [choice, setChoice] = useState<number | null>(null)
+  const [picked, setPicked] = useState<ReadonlySet<number>>(new Set())
+  // Locked in: what to tell the student before the video starts again.
+  const [result, setResult] = useState<AnswerResult | null>(null)
+  const continueRef = useRef<HTMLButtonElement>(null)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -826,6 +874,9 @@ function QuestionPanel(props: {
   }, [revealTry])
 
   useEffect(() => firstRef.current?.focus(), [q])
+  useEffect(() => {
+    if (result) continueRef.current?.focus()
+  }, [result])
 
   if (!q) {
     return (
@@ -849,7 +900,30 @@ function QuestionPanel(props: {
     )
   }
 
-  const response = q.kind === 'mc' ? (choice === null ? '' : String(choice)) : text.trim()
+  const response = q.kind === 'mc' ? (choice === null ? '' : String(choice)) : q.kind === 'multi' ? multiResponse(picked) : text.trim()
+
+  // After the answer is locked: right/wrong for choice questions (if the lesson shows it), "submitted for review"
+  // for short answers. Never which choice was right. Continue starts the video again.
+  if (result) {
+    const short = q.kind === 'short'
+    return (
+      <aside className="p-panel" aria-labelledby="q-prompt">
+        <p className="p-qmeta">
+          Question {number} · {formatTime(q.at_s)}
+        </p>
+        <h2 id="q-prompt">{q.prompt}</h2>
+        <p className={`p-result ${result}`} role="status">
+          {result === 'correct' ? '✓ Correct' : result === 'incorrect' ? '✗ Incorrect' : short ? 'Submitted for review' : 'Answer saved'}
+        </p>
+        {result === 'submitted' && short && <p className="p-hint">Your teacher will grade this one.</p>}
+        <div className="p-submit">
+          <button ref={continueRef} className="s-btn primary big" onClick={onDone}>
+            Keep watching
+          </button>
+        </div>
+      </aside>
+    )
+  }
 
   const submit = async () => {
     if (!response || busy) return
@@ -857,15 +931,19 @@ function QuestionPanel(props: {
     setError(null)
     try {
       await ensureReached()
+      let r: AnswerResult
       try {
-        await submitAnswer(attemptId, q.id, response)
+        r = await submitAnswer(attemptId, q.id, response)
       } catch (e) {
         // The server hadn't seen them reach this question yet (a save was still in the air). Save, retry once.
         if (classifyRpcError(e as { message?: string }) !== 'not_reached') throw e
         await ensureReached()
-        await submitAnswer(attemptId, q.id, response)
+        r = await submitAnswer(attemptId, q.id, response)
       }
-      onDone()
+      // Choice answers with feedback off go straight back to the video, as before.
+      if (q.kind !== 'short' && (!showFeedback || r === 'submitted')) return onDone()
+      setBusy(false)
+      setResult(r)
     } catch (e) {
       const kind = classifyRpcError(e as { message?: string })
       if (kind === 'already_answered') return onDone()
@@ -882,7 +960,31 @@ function QuestionPanel(props: {
         Question {number} · {formatTime(q.at_s)}
       </p>
       <h2 id="q-prompt">{q.prompt}</h2>
-      {q.kind === 'mc' ? (
+      {q.kind === 'multi' ? (
+        <fieldset className="p-choices" aria-labelledby="q-prompt" aria-describedby="q-multi-hint">
+          <p id="q-multi-hint" className="p-hint">Pick every answer that's right.</p>
+          {(q.choices ?? []).map((c, i) => (
+            <label key={i} className={`p-ans${picked.has(i) ? ' sel' : ''}`}>
+              <input
+                ref={i === 0 ? firstRef : undefined}
+                type="checkbox"
+                checked={picked.has(i)}
+                onChange={() =>
+                  setPicked((p) => {
+                    const n = new Set(p)
+                    if (n.has(i)) n.delete(i)
+                    else n.add(i)
+                    return n
+                  })
+                }
+                disabled={busy}
+              />
+              <b aria-hidden="true">{String.fromCharCode(65 + i)}</b>
+              <span>{c}</span>
+            </label>
+          ))}
+        </fieldset>
+      ) : q.kind === 'mc' ? (
         <div className="p-choices" role="radiogroup" aria-labelledby="q-prompt">
           {(q.choices ?? []).map((c, i) => (
             <label key={i} className={`p-ans${choice === i ? ' sel' : ''}`}>
@@ -929,7 +1031,7 @@ function QuestionPanel(props: {
           </p>
         )}
         <button className="s-btn primary big" onClick={() => void submit()} disabled={!response || busy}>
-          {busy ? 'Sending…' : 'Submit and keep watching'}
+          {busy ? 'Sending…' : 'Submit'}
         </button>
         <p className="p-hint">You can't change your answer after you submit.</p>
       </div>
