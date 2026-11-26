@@ -5,6 +5,7 @@ import { BULK_PASTE_EXAMPLE, parseBulkPaste, type DraftQuestion } from '../lib/b
 import { EDPUZZLE_IMPORT_EXAMPLE, parseEdpuzzlePaste } from '../lib/edpuzzleImport'
 import { bookmarkletHref, readBookmarkletHash } from '../lib/edpuzzleBookmarklet'
 import { formatTime, parseTime } from '../lib/time'
+import { blankQuestion, switchKind, videoProblem } from '../lib/builder'
 import { loadYouTubeApi, parseYouTubeId, youTubeErrorMessage, type YTPlayer } from '../lib/youtube'
 
 type Draft = DraftQuestion & { key: string; timeText: string }
@@ -38,6 +39,11 @@ export function LessonBuilder() {
   const [dirty, setDirty] = useState(false)
   // A bad or someone else's lesson id: show an error, not an empty form that would fail (or create a copy) on Save.
   const [loadFailed, setLoadFailed] = useState(false)
+  // Save went through but re-reading the question ids failed. Editing on would save the drafts as
+  // brand-new questions, so the form stays locked until the teacher reloads (audit #12).
+  const [needsReload, setNeedsReload] = useState(false)
+  // Bumped on every edit, so a save can tell whether the teacher changed anything while it was in flight (audit #8).
+  const rev = useRef(0)
 
   const playerEl = useRef<HTMLDivElement>(null)
   const player = useRef<YTPlayer | null>(null)
@@ -142,6 +148,7 @@ export function LessonBuilder() {
   }, [youtubeId, loading])
 
   const touch = () => {
+    rev.current++
     setDirty(true)
     setStatus(null)
   }
@@ -163,7 +170,7 @@ export function LessonBuilder() {
 
   const addQuestion = (kind: 'mc' | 'short') => {
     player.current?.pauseVideo()
-    const q = toDraft({ at_s: now(), kind, prompt: '', choices: kind === 'mc' ? ['', ''] : [], correct_index: kind === 'mc' ? 0 : null })
+    const q = toDraft(blankQuestion(kind, now()))
     setQuestions((qs) => [...qs, q].sort((a, b) => a.at_s - b.at_s))
     touch()
   }
@@ -245,8 +252,8 @@ export function LessonBuilder() {
   // ---- save
   const problems = (): string[] => {
     const out: string[] = []
-    if (!youtubeId) out.push('Add a YouTube video.')
-    else if (!duration) out.push('Wait for the video to load.')
+    const vp = videoProblem(videoInput, youtubeId, duration)
+    if (vp) out.push(vp)
     if (!title.trim()) out.push('Give the lesson a title.')
     questions.forEach((q, i) => {
       const n = `Question ${i + 1}`
@@ -263,6 +270,7 @@ export function LessonBuilder() {
     const p = problems()
     if (p.length) return setStatus({ kind: 'error', text: p.join(' ') })
     setSaving(true)
+    const savedRev = rev.current
     const { data, error } = await supabase.rpc('save_lesson', {
       p_lesson: {
         id: id ?? null,
@@ -287,20 +295,39 @@ export function LessonBuilder() {
           rubric: q.kind === 'short' ? (q.rubric ?? '').trim() : '',
         })),
     })
-    setSaving(false)
-    if (error) return setStatus({ kind: 'error', text: error.message })
-    setDirty(false)
-    if (isNew) navigate(`/teacher/lessons/${data}`, { replace: true })
-    else {
-      // reload so new questions pick up their ids
-      const { data: qs } = await supabase
+    if (error) {
+      setSaving(false)
+      return setStatus({ kind: 'error', text: error.message })
+    }
+    if (isNew) {
+      setSaving(false)
+      setDirty(false)
+      navigate(`/teacher/lessons/${data}`, { replace: true })
+      return setStatus({ kind: 'ok', text: 'Saved.' })
+    }
+    // Reload so new questions pick up their ids. One retry: a missed read here means the next save
+    // would treat every new question as new again.
+    const readIds = () =>
+      supabase
         .from('questions')
         .select('id, at_s, kind, prompt, choices, correct_index, rubric')
         .eq('lesson_id', id)
         .order('at_s')
         .order('position')
-      if (qs) setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+    let { data: qs, error: readErr } = await readIds()
+    if (readErr || !qs) ({ data: qs, error: readErr } = await readIds())
+    setSaving(false)
+    if (readErr || !qs) {
+      setNeedsReload(true)
+      return setStatus({ kind: 'error', text: "Saved, but Oasis couldn't refresh the lesson. Reload the page before making more changes." })
     }
+    if (rev.current !== savedRev) {
+      // The form is locked while saving, so this shouldn't happen; if it does, keep the newer edits
+      // and leave the lesson marked unsaved rather than overwrite them with the server copy.
+      return setStatus({ kind: 'error', text: 'Saved, but you changed something while it was saving. Save again to keep those changes.' })
+    }
+    setQuestions(qs.map((q) => toDraft({ ...q, at_s: Number(q.at_s), choices: q.choices ?? [] })))
+    setDirty(false)
     setStatus({ kind: 'ok', text: 'Saved.' })
   }
 
@@ -376,9 +403,14 @@ export function LessonBuilder() {
           ← Back
         </Link>
         <strong>{isNew ? 'New lesson' : 'Edit lesson'}</strong>
-        <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        {needsReload
+          ? <button className="primary" onClick={() => window.location.reload()}>Reload</button>
+          : <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>}
       </header>
       {status && <p className={status.kind} role={status.kind === 'error' ? 'alert' : 'status'}>{status.text}</p>}
+
+      {/* Locked while saving: edits made mid-save were silently replaced by the server copy (audit #8). */}
+      <fieldset className="plain" disabled={saving || needsReload}>
 
       {fromEdpuzzle && <section>{importPanel}</section>}
 
@@ -453,7 +485,7 @@ export function LessonBuilder() {
                   value={q.kind}
                   onChange={(e) => {
                     const kind = e.target.value as 'mc' | 'short'
-                    update(q.key, kind === 'mc' ? { kind, choices: q.choices.length >= 2 ? q.choices : ['', ''], correct_index: q.correct_index ?? 0 } : { kind, choices: [], correct_index: null })
+                    update(q.key, switchKind(q, kind))
                   }}
                 >
                   <option value="mc">Multiple choice</option>
@@ -507,6 +539,7 @@ export function LessonBuilder() {
         </details>
       </section>
       </div>
+      </fieldset>
     </main>
   )
 }
