@@ -8,11 +8,13 @@ import {
   STATUS_LABEL,
   aiPending,
   aiToReview,
+  averageHint,
   buildCsv,
   choiceLetter,
   csvFilename,
   displayName,
   formatScore,
+  gradesBusy,
   mcChoice,
   needsGrading,
   questionStats,
@@ -41,6 +43,8 @@ export function AssignmentResults() {
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [onlyToGrade, setOnlyToGrade] = useState(false)
   const pendingGrades = useRef(0)
+  // Same count as state, so Export and Send can wait for grade saves to land.
+  const [savingGrades, setSavingGrades] = useState(0)
   const loadSeq = useRef(0)
 
   const load = useCallback(
@@ -82,8 +86,10 @@ export function AssignmentResults() {
     patch((s) => ({ ...s, answers: { ...s.answers, [questionId]: { ...s.answers[questionId], is_correct: correct, graded_by: 'teacher' } } }))
     setNotice(null)
     pendingGrades.current++
+    setSavingGrades((n) => n + 1)
     const { data: score, error: err } = await supabase.rpc('grade_answer', { p_attempt: attempt, p_question: questionId, p_correct: correct })
     pendingGrades.current--
+    setSavingGrades((n) => n - 1)
     if (err) {
       patch((s) => ({ ...s, answers: { ...s.answers, [questionId]: before } }))
       setNotice(`Couldn't save the grade for ${displayName(student)}. Try again.`)
@@ -113,8 +119,10 @@ export function AssignmentResults() {
   const sortBy = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'score' ? 'desc' : 'asc' }))
 
+  const busy = gradesBusy(savingGrades, !!aiRunning)
+
   const exportCsv = () => {
-    if (!data) return
+    if (!data || busy) return
     const url = URL.createObjectURL(new Blob([buildCsv(data)], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
@@ -124,7 +132,7 @@ export function AssignmentResults() {
   }
 
   const sendGrades = async () => {
-    if (!id || sending) return
+    if (!id || sending || busy) return
     setSending(true)
     setNotice(null)
     setInfo(null)
@@ -212,11 +220,12 @@ export function AssignmentResults() {
             </button>
           )}
           {assignment.google_coursework_id && students.some((s) => s.status === 'finished') && (
-            <button onClick={sendGrades} disabled={sending}>{sending ? 'Sending…' : 'Send grades to Classroom'}</button>
+            <button onClick={sendGrades} disabled={sending || !!busy} title={busy ?? undefined}>{sending ? 'Sending…' : 'Send grades to Classroom'}</button>
           )}
-          <button onClick={exportCsv} disabled={students.length === 0}>Export CSV</button>
+          <button onClick={exportCsv} disabled={students.length === 0 || !!busy} title={busy ?? undefined}>Export CSV</button>
         </div>
       </div>
+      {busy && savingGrades > 0 && <p className="muted small" role="status">{busy} Export and Send wait until it's done.</p>}
       {info && <p className="muted" role="status">{info}</p>}
       {notice && <p className="error" role="alert">{notice}</p>}
 
@@ -225,11 +234,12 @@ export function AssignmentResults() {
         <Stat n={summary.in_progress} label="In progress" />
         <Stat n={summary.not_started} label="Not started" />
         <Stat n={summary.not_signed_in} label="Never signed in" />
-        <Stat n={summary.average === null ? '—' : formatScore(summary.average)} label="Class average" hint={summary.average === null ? 'nobody finished yet' : 'finished students'} />
+        <Stat n={summary.average === null ? '—' : formatScore(summary.average)} label="Class average" hint={averageHint(summary)} />
         <li className={`stat${summary.needsGrading ? ' attention' : ''}`}>
           <strong>{summary.needsGrading}</strong>
           <span>To grade</span>
-          {summary.needsGrading > 0 && (
+          {/* Keep the way back once the filtered list is graded down to nothing (audit #22). */}
+          {(summary.needsGrading > 0 || onlyToGrade) && (
             <button className="small" aria-pressed={onlyToGrade} onClick={() => setOnlyToGrade((v) => !v)}>
               {onlyToGrade ? 'Show everyone' : 'Show these'}
             </button>
@@ -254,7 +264,12 @@ export function AssignmentResults() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={4} className="muted">Nothing left to grade.</td></tr>
+                  <tr>
+                    <td colSpan={4} className="muted">
+                      Nothing left to grade.{' '}
+                      {onlyToGrade && <button className="small" onClick={() => setOnlyToGrade(false)}>Show everyone</button>}
+                    </td>
+                  </tr>
                 )}
                 {rows.map((s) => {
                   const key = studentKey(s)
