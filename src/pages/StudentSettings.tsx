@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useAuth } from '../auth/AuthProvider'
 import { StudentShell } from '../components/StudentShell'
-import { readPrefs, savePrefs, type StudentPrefs } from '../lib/studentPrefs'
+import { readPrefs, savePrefs, THEMES, type Prefs } from '../lib/prefs'
 
 /** Student settings (beta item 3): reading and viewing options on this device, the signed-in account, sign out. */
 export function StudentSettings() {
   const { profile, signOut } = useAuth()
-  const [prefs, setPrefs] = useState<StudentPrefs>(() => readPrefs())
+  const [prefs, setPrefs] = useState<Prefs>(() => readPrefs())
   const [saved, setSaved] = useState(false)
-  const set = (patch: Partial<StudentPrefs>) => {
+  const set = (patch: Partial<Prefs>) => {
     const next = { ...prefs, ...patch }
     setPrefs(next)
     savePrefs(next)
@@ -22,6 +22,15 @@ export function StudentSettings() {
 
       <section className="s-card" aria-labelledby="see-h">
         <h2 id="see-h">Reading and viewing</h2>
+        <fieldset className="s-field">
+          <legend>Theme</legend>
+          {THEMES.map(([v, label]) => (
+            <label key={v} className="s-choice">
+              <input type="radio" name="theme" checked={prefs.theme === v} onChange={() => set({ theme: v })} />
+              {label}
+            </label>
+          ))}
+        </fieldset>
         <fieldset className="s-field">
           <legend>Text size</legend>
           {(['normal', 'large', 'larger'] as const).map((v) => (

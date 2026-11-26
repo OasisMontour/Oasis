@@ -4,10 +4,10 @@ import '@fontsource-variable/bricolage-grotesque/wght.css'
 import '@fontsource-variable/source-sans-3/wght.css'
 import './index.css'
 import App from './App.tsx'
-import { applyPrefs, readPrefs } from './lib/studentPrefs'
+import { startPrefs } from './lib/prefs'
 
-// Student reading options (text size, contrast, motion) apply from the first paint.
-applyPrefs(readPrefs())
+// Theme and reading options (text size, contrast, motion) apply from the first paint.
+startPrefs()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
