@@ -5,7 +5,15 @@ export type AiBatch =
   | { ok: true; graded: number; unsure: number; skipped: number; unavailable: number; remaining: number }
   | { ok: false; error: string; remaining?: number }
 
-export type AiRun = { graded: number; unsure: number; skipped: number; unavailable: number; stoppedBy: string | null }
+export type AiRun = {
+  graded: number
+  unsure: number
+  skipped: number
+  unavailable: number
+  stoppedBy: string | null
+  /** Answers the server says are still waiting for AI after the last batch, when it told us. */
+  remaining?: number
+}
 
 /** Hard stop so a bug can't loop forever: 25 batches of 8 is 200 answers per click. */
 const MAX_BATCHES = 25
@@ -29,12 +37,15 @@ export async function runAiGrading(
     run.unsure += r.unsure
     run.skipped += r.skipped
     run.unavailable += r.unavailable
+    run.remaining = r.remaining
     onProgress?.({ ...run })
     if (r.unavailable > 0) {
       run.stoppedBy = 'unavailable'
       break
     }
     if (r.remaining <= 0 || r.graded + r.unsure + r.skipped === 0) break
+    // Out of batches with work left: say so instead of stopping silently (audit #23).
+    if (i === MAX_BATCHES - 1) run.stoppedBy = 'batch_limit'
   }
   return run
 }
@@ -57,7 +68,12 @@ export function aiRunMessage(run: AiRun): { text: string; isError: boolean } {
   if (run.graded) parts.push(`AI graded ${plural(run.graded, 'answer')}. They're marked "AI": check them and change any you disagree with.`)
   const left = run.unsure + run.skipped
   if (left) parts.push(`${plural(left, 'answer')} ${left === 1 ? 'was' : 'were'} left for you (AI wasn't sure, or the answer looked like it was talking to the grader).`)
-  const stop = run.stoppedBy ? (STOP_TEXT[run.stoppedBy] ?? "AI grading stopped. Try again in a minute.") : null
+  const stop =
+    run.stoppedBy === 'batch_limit'
+      ? `${plural(run.remaining ?? 0, 'answer')} ${run.remaining === 1 ? 'is' : 'are'} still waiting: AI grades up to 200 per click. Click Grade with AI again to continue.`
+      : run.stoppedBy
+        ? (STOP_TEXT[run.stoppedBy] ?? 'AI grading stopped. Try again in a minute.')
+        : null
   if (stop) parts.push(stop)
   if (!parts.length) parts.push('Nothing to grade with AI.')
   return { text: parts.join(' '), isError: !!stop && run.graded + left === 0 }

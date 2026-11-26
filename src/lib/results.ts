@@ -99,8 +99,13 @@ export type Summary = {
   in_progress: number
   not_started: number
   not_signed_in: number
-  /** Mean score of finished students, or null if nobody has finished. */
+  /**
+   * Mean score of finished students whose answers are all graded, or null if there are none. A student
+   * with short answers still waiting would drag the average down with a score that isn't final (audit #24).
+   */
   average: number | null
+  /** Finished students left out of the average because they still have answers to grade. */
+  averageExcluded: number
   /** Short answers (from anyone) still waiting for a teacher grade. */
   needsGrading: number
   /** Students who left the video at least once. */
@@ -126,16 +131,20 @@ export function aiToReview(student: ResultStudent): number {
 }
 
 export function summarize(students: ResultStudent[], questions: ResultQuestion[]): Summary {
-  const s: Summary = { total: students.length, finished: 0, in_progress: 0, not_started: 0, not_signed_in: 0, average: null, needsGrading: 0, leftTab: 0 }
+  const s: Summary = { total: students.length, finished: 0, in_progress: 0, not_started: 0, not_signed_in: 0, average: null, averageExcluded: 0, needsGrading: 0, leftTab: 0 }
   let sum = 0
   let n = 0
   for (const st of students) {
     s[st.status]++
+    const toGrade = needsGrading(st, questions)
     if (st.status === 'finished' && st.score !== null) {
-      sum += Number(st.score)
-      n++
+      if (toGrade > 0) s.averageExcluded++
+      else {
+        sum += Number(st.score)
+        n++
+      }
     }
-    s.needsGrading += needsGrading(st, questions)
+    s.needsGrading += toGrade
     if (st.focus_events > 0) s.leftTab++
   }
   s.average = n ? sum / n : null
@@ -260,4 +269,21 @@ export function buildCsv(data: Pick<AssignmentResults, 'questions' | 'students'>
 export function csvFilename(lessonTitle: string, className: string): string {
   const base = `${lessonTitle} - ${className}`.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim()
   return `${base || 'results'}.csv`
+}
+
+/**
+ * Why grades can't be exported or sent right now, or null if they can. While a grade save or an AI batch
+ * is in flight, the page shows answers the server hasn't scored yet, so a CSV could pair a "correct"
+ * answer with the old score (audit #20) and Classroom could get the old grades (audit #21).
+ */
+export function gradesBusy(pendingGradeSaves: number, aiRunning: boolean): string | null {
+  if (pendingGradeSaves > 0) return 'Saving grades…'
+  if (aiRunning) return 'AI grading is still running…'
+  return null
+}
+
+/** Class-average hint, saying when finished students were left out because grading isn't done. */
+export function averageHint(s: Pick<Summary, 'average' | 'averageExcluded' | 'finished'>): string {
+  if (s.average === null) return s.averageExcluded ? `${s.averageExcluded} still to grade` : 'nobody finished yet'
+  return s.averageExcluded ? `fully graded only · ${s.averageExcluded} still to grade` : 'finished students'
 }
